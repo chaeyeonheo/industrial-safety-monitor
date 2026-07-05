@@ -52,6 +52,33 @@ Video Frame
 pip install -r requirements.txt
 ```
 
+## 명령어 모음
+
+**PPE 데이터 변환 + 학습**
+```bash
+python scripts/convert_aihub163_to_yolo.py --max-frames 8000
+python scripts/train_ppe_yolo.py --epochs 40 --batch 16
+```
+
+**낙상 분류기(HD-GCN) 데이터 변환 + 학습**
+```bash
+python scripts/convert_aihub163_keypoints_to_pyskl_transition.py
+python scripts/train_hdgcn_fall.py --epochs 15 --batch 32
+```
+
+**전체 파이프라인 데모 실행** (탐지+추적 → 낙상 → PPE → 오버레이 영상)
+```bash
+python scripts/demo_full_pipeline.py                 # 기본 3개 샘플 전부
+python scripts/demo_full_pipeline.py --source S2-N6001_trip --max-frames 200
+```
+
+**VQA 웹앱 실행**
+```bash
+export GEMINI_API_KEY=발급받은_키
+python webapp/app.py
+# http://localhost:5050 접속
+```
+
 ## 데이터셋
 
 - **AIHub 163** (공사현장 안전장비 인식): https://aihub.or.kr/aihubdata/data/view.do?dataSetSn=163
@@ -67,13 +94,15 @@ pip install -r requirements.txt
 ## 진행 상황 (Phase 체크리스트)
 
 - [x] Phase 0: 환경 설정
-- [x] Phase 1: 탐지+추적 공유 백본 (코드 완료, 정지이미지+실제 프레임 시퀀스 트래킹 검증 완료 — 단, 라벨용 희소 프레임이라 ID가 자주 끊김을 확인, `results/RESULTS.md` 참고)
-- [ ] Phase 2: 낙상 감지
-- [ ] Phase 3: PPE / 구역 침입
-- [ ] Phase 4: Weakly-supervised VAD 비교 (선택)
+- [x] Phase 1: 탐지+추적 공유 백본
+- [x] Phase 2: 낙상 감지 (Stage A 휴리스틱 + HD-GCN, ablation 포함)
+- [x] Phase 3: PPE 미착용 판정 (구역 침입은 미착수)
+- [ ] Phase 4: Weakly-supervised VAD 비교 (선택, 미착수)
 - [ ] Phase 5: Latency 벤치마크
-- [ ] Phase 6: 데모 영상 생성
-- [ ] Phase 7: 최종 문서화
+- [x] Phase 6: 데모 영상 생성 (다중 샘플 + VQA 웹앱)
+- [x] Phase 7: 최종 문서화 (`docs/FINAL_SUMMARY.md`)
+
+전체 흐름과 실측 수치는 `docs/FINAL_SUMMARY.md`에 정리되어 있다.
 
 ## 라이선스 유의사항
 

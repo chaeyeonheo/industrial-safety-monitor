@@ -26,7 +26,7 @@ track_id, 이벤트 종류, 세부사항 포함).
 
 
 class SafetyVQA:
-    def __init__(self, api_key: str | None = None, model: str = "gemini-3.5-flash"):
+    def __init__(self, api_key: str | None = None, model: str = "gemini-flash-latest"):
         # api_key=None이면 GEMINI_API_KEY/GOOGLE_API_KEY 환경변수를 genai.Client()가
         # 자동으로 사용한다.
         self.client = genai.Client(api_key=api_key) if api_key else genai.Client()
