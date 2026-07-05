@@ -94,24 +94,33 @@ def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     first_img = cv2.imread(str(run[0][0]))
     h, w = first_img.shape[:2]
-    out_h = h  # 위/아래 절반씩 리사이즈해서 합치므로 최종 높이는 원본과 동일
     half_h = h // 2
-    writer = cv2.VideoWriter(str(OUTPUT_DIR / "tracking_vs_transition.mp4"),
-                              cv2.VideoWriter_fourcc(*"mp4v"), 5, (w, out_h))
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer_combined = cv2.VideoWriter(str(OUTPUT_DIR / "tracking_vs_transition.mp4"), fourcc, 5, (w, h))
+    writer_tracking_only = cv2.VideoWriter(str(OUTPUT_DIR / "tracking_only.mp4"), fourcc, 5, (w, h))
+    writer_transition_only = cv2.VideoWriter(str(OUTPUT_DIR / "transition_only.mp4"), fourcc, 5, (w, h))
 
-    saved_examples = {"miss_but_detected": False, "both_ok": False}
+    saved_examples = {"miss_but_detected": False}
 
     for idx, (path, kp, _res) in enumerate(run):
         img = cv2.imread(str(path))
+
+        # keypoint 자체로부터 bbox를 뽑아 위쪽(YOLO bbox)과 같은 방식(사각형)으로
+        # 그려서 "박스 vs 점"이 아니라 "박스 vs 박스"로 직접 비교 가능하게 한다.
+        visible = kp[kp[:, 2] > 0]
+        kp_bbox = None
+        if len(visible) > 0:
+            kp_bbox = (visible[:, 0].min(), visible[:, 1].min(), visible[:, 0].max(), visible[:, 1].max())
 
         top = img.copy()
         bbox = bbox_by_frame_idx.get(idx)
         if bbox is not None:
             x1, y1, x2, y2 = (int(v) for v in bbox)
             cv2.rectangle(top, (x1, y1), (x2, y2), (0, 255, 0), 3)
-            cv2.putText(top, "tracking: OK", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 3)
+            cv2.putText(top, "tracking(YOLO+ByteTrack): OK", (20, 40),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 3)
         else:
-            cv2.putText(top, "tracking: DETECTION LOST", (20, 40),
+            cv2.putText(top, "tracking(YOLO+ByteTrack): DETECTION LOST", (20, 40),
                         cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 3)
 
         bottom = img.copy()
@@ -119,24 +128,33 @@ def main() -> None:
             if v == 0:
                 continue
             cv2.circle(bottom, (int(x), int(y)), 5, (255, 200, 0), -1)
-        ratio_text = f"ratio={ratios[idx]:.2f}"
+        if kp_bbox is not None:
+            x1, y1, x2, y2 = (int(v) for v in kp_bbox)
+            cv2.rectangle(bottom, (x1, y1), (x2, y2), (255, 200, 0), 3)
+        ratio_text = f"keypoint bbox ratio={ratios[idx]:.2f}"
         cv2.putText(bottom, ratio_text, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 200, 0), 3)
         if transition_flag[idx]:
             cv2.putText(bottom, "keypoint-based: FALL TRANSITION DETECTED", (20, 80),
                         cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 3)
 
+        writer_tracking_only.write(top)
+        writer_transition_only.write(bottom)
+
         top_small = cv2.resize(top, (w, half_h))
         bottom_small = cv2.resize(bottom, (w, h - half_h))
         combined = np.vstack([top_small, bottom_small])
-        writer.write(combined)
+        writer_combined.write(combined)
 
         if bbox is None and transition_flag[idx] and not saved_examples["miss_but_detected"]:
             cv2.imwrite(str(FIGURES_DIR / "compare_tracking_miss_transition_catches.png"), combined)
             saved_examples["miss_but_detected"] = True
             print(f"[compare] frame {idx}: tracking 실패했지만 전환감지는 성공 — 예시 저장")
 
-    writer.release()
-    print(f"[compare] saved video to {OUTPUT_DIR / 'tracking_vs_transition.mp4'}")
+    writer_combined.release()
+    writer_tracking_only.release()
+    writer_transition_only.release()
+    print(f"[compare] saved: {OUTPUT_DIR / 'tracking_vs_transition.mp4'} (합본), "
+          f"{OUTPUT_DIR / 'tracking_only.mp4'}, {OUTPUT_DIR / 'transition_only.mp4'}")
 
     n_miss = sum(1 for i in range(len(run)) if i not in bbox_by_frame_idx)
     n_miss_but_flagged = sum(1 for i in range(len(run)) if i not in bbox_by_frame_idx and transition_flag[i])

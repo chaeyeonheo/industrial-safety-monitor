@@ -14,6 +14,12 @@ from typing import Iterator
 import torch
 from ultralytics import YOLO
 
+# cuDNN의 "첫 호출 시 최적 알고리즘 탐색(autotune)"을 끈다. 이 탐색 과정이
+# 순간적으로 GPU 메모리를 크게 잡아먹는 스파이크를 만드는데(사용자가 실측한
+# "치솟았다가 그 고비를 넘기면 안정적"인 패턴과 일치), 이 프로젝트는 입력
+# 해상도가 자주 바뀌지 않아 autotune으로 얻는 속도 이득이 크지 않다.
+torch.backends.cudnn.benchmark = False
+
 COCO_PERSON_CLASS_ID = 0
 
 
