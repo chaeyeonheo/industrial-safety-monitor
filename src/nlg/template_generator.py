@@ -17,7 +17,7 @@ _TEMPLATES: dict[EventType, Template] = {
     ),
 }
 
-_ITEM_NAME_KR = {
+ITEM_NAME_KR = {
     "helmet": "안전모",
     "vest": "안전조끼",
     "harness": "안전벨트",
@@ -30,5 +30,5 @@ def generate_alarm_text(event: SafetyEvent) -> str:
     return template.render(
         track_id=event.track_id,
         confidence=event.confidence,
-        detail_kr=_ITEM_NAME_KR.get(event.detail, event.detail),
+        detail_kr=ITEM_NAME_KR.get(event.detail, event.detail),
     )

@@ -11,6 +11,7 @@ bbox에 비해 훨씬 작은 신체 부위 박스라 전체 bbox 간 IoU는 거�
 
 from __future__ import annotations
 
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
 
 Bbox = tuple[float, float, float, float]
@@ -87,3 +88,32 @@ def check_ppe_compliance(
         detected = associate_ppe_to_person(person_bbox, ppe_detections)
         statuses.append(PersonPPEStatus(track_id=track_id, person_bbox=person_bbox, detected_items=detected))
     return statuses
+
+
+class PPEStabilityFilter:
+    """프레임 단위 탐지는 순간적인 각도/블러/부분가림 때문에 흔들린다(예: 헬멧을
+    쓰고 있는데 특정 프레임에서만 놓쳐서 "미착용"으로 잘못 뜨는 경우). 같은
+    track_id의 최근 프레임들을 다수결로 봐서 판정을 안정화한다.
+
+    실측(2026-07-06): 이 필터 없이 실제 데모 영상을 돌려봤더니 같은 사람인데
+    프레임마다 미착용 항목이 바뀌는 문제를 사용자가 발견함 — 프레임 단위
+    detector 출력을 그대로 쓰면 이렇게 된다는 실증."""
+
+    def __init__(self, window_frames: int = 7, min_frames_for_decision: int = 3):
+        self.window_frames = window_frames
+        self.min_frames_for_decision = min_frames_for_decision
+        self._history: dict[tuple[int, str], deque[bool]] = defaultdict(
+            lambda: deque(maxlen=window_frames))
+
+    def update(self, status: PersonPPEStatus) -> list[str]:
+        """이번 프레임의 원시 판정을 반영하고, 안정화된 미착용 목록을 반환한다."""
+        stable_missing = []
+        for item in REQUIRED_ITEMS:
+            key = (status.track_id, item)
+            history = self._history[key]
+            history.append(item in status.detected_items)
+            if len(history) < self.min_frames_for_decision:
+                continue  # 아직 판단할 근거(프레임)가 부족 — 성급하게 미착용 단정 안 함
+            if sum(history) / len(history) < 0.5:
+                stable_missing.append(item)
+        return stable_missing
