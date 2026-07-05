@@ -1,0 +1,34 @@
+# 파이프라인 전역 설정.
+# 카메라별 실제 설치 위치가 정해지기 전까지는 합리적 기본값을 사용한다.
+# 각 값의 결정 근거는 옆에 주석으로 남긴다 (Phase 1 이후 실측 데이터로 조정 예정).
+
+detection:
+  model: "yolo11n.pt"        # 실시간성 우선(경량), 정확도 상한 비교는 Phase 3에서 yolo11x/Swin 등 추가
+  person_class_id: 0          # COCO person
+  conf_threshold: 0.4
+  tracker: "bytetrack.yaml"   # Ultralytics 내장 ByteTrack config
+
+fall_detection:
+  stage_a_heuristic:
+    # bbox aspect ratio(w/h)가 짧은 시간에 급격히 커지고(눕는 자세) 동시에
+    # centroid의 수직 하강 속도가 임계값을 넘으면 Stage B(포즈 분류기) 트리거.
+    aspect_ratio_delta_threshold: 0.5   # 초기값, Phase 2 평가로 튜닝
+    vertical_velocity_threshold_px_per_s: 200
+    window_frames: 15
+  stage_b_classifier:
+    type: "stgcn"              # stgcn | ctrgcn | cnn_lstm
+    keypoint_format: "coco17"
+
+ppe_detection:
+  mode: "indirect"             # indirect(IoU 매칭) | direct(단일 클래스 모델)
+  iou_match_threshold: 0.3
+  required_ppe: ["helmet", "safety_vest"]
+
+zone_intrusion:
+  mode: "roi"                  # roi(발위치 근사) | bev(호모그래피)
+  # ROI 폴리곤은 카메라별로 달라 실제 데모 영상 확보 후 지정한다(플레이스홀더).
+  roi_polygons: []
+  dwell_time_alert_seconds: 5
+
+alarm:
+  cooldown_seconds: 30          # 동일 track_id/이벤트 유형에 대한 중복 알람 방지

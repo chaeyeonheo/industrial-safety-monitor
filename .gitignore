@@ -1,0 +1,25 @@
+# Data (downloaded manually from AIHub, never commit)
+data/raw/
+data/processed/
+data/demo_samples/*
+!data/demo_samples/.gitkeep
+
+# Model weights / checkpoints
+weights/
+
+# Pipeline outputs (demo videos, benchmark artifacts)
+outputs/
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+
+# Third-party repos cloned for reuse (pyskl, RTFM, ByteTrack, etc.)
+third_party/
