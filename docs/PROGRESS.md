@@ -65,7 +65,34 @@ Phase 3 PPE 학습 파이프라인을 먼저 검증하고, 필요하면 나머�
   지점을 시퀀스 경계(장면전환)로 보고 분리한 뒤 슬라이딩 윈도우 구성. 상세 수치는
   `results/RESULTS.md` Phase 1 절의 "정정" 항목 참고.
 
-## 현재 상태 (2026-07-05 23:00 기준, 컴퓨터 과부하로 세션이 여러 번 끊겨 자주 갱신 중)
+## ⚠️ 컴퓨터가 반복적으로 꺼짐 (2026-07-06 새벽 기준, 최소 5~6회) — 읽고 시작할 것
+
+**증상**: `clock_watchdog_timeout` BSOD가 반복됨. 처음엔 "AIHub 대용량 다운로드+zip
+무결성 검사+YOLO 추론이 겹쳐서"라고 생각해 (1) GPU를 명시적으로 강제(`device="0"`),
+(2) `torch.backends.cudnn.benchmark = False`(첫 추론 시 cuDNN 알고리즘 탐색이 만드는
+메모리 스파이크 방지), (3) 50프레임마다 `torch.cuda.empty_cache()` 를 추가했다.
+
+**그런데 사용자가 타당한 반론 제기**: `empty_cache()`는 유휴 메모리를 드라이버에
+반환할 뿐이라, 반환 후 다음 프레임에서 다시 할당받는 저수준 드라이버 호출이 오히려
+잦아져서 드라이버가 불안정하다면 도움이 안 되거나 더 나쁠 수 있다. 또한 "데이터를
+잘게 쪼개서 넣자"는 제안에 대해서는 — `track_stream`이 이미 프레임 1개씩만 처리하는
+스트리밍 구조라 더 쪼갤 여지가 없다는 것도 확인함.
+
+**중요한 재평가**: 크래시가 (a) AIHub 다운로드(네트워크/디스크, GPU 무관), (b) zip
+무결성 검사(순수 CPU, GPU 무관), (c) GPU 추론까지 **성격이 전혀 다른 작업들에서 공통
+발생**하고 있다. 즉 이건 내 코드의 GPU 메모리 관리 문제라기보다 **지속적인 고부하
+자체에 대한 하드웨어/발열/전원 쪽 불안정성일 가능성이 높다** — 소프트웨어 튜닝으로
+근본 해결이 안 될 수 있음을 사용자에게 솔직히 전달함. 노트북 냉각/전원 어댑터 연결
+여부, Windows 이벤트 뷰어의 정확한 BSOD 코드, GPU 드라이버 최신 여부 등 하드웨어/시스템
+레벨 점검을 사용자에게 제안하는 것이 다음 단계로 필요할 수 있음.
+
+**적용된 코드 변경(`src/detection_tracking/tracker.py`, 아직 커밋 안 함)**:
+- `device` 자동감지 대신 명시적으로 `"0"`(CUDA) 강제, 실제 사용 디바이스를 로그 출력
+- `torch.backends.cudnn.benchmark = False`
+- 50프레임마다 `torch.cuda.empty_cache()` — **사용자 반론 이후 이 부분을 유지할지
+  제거할지는 아직 결론 안 남. 다음 세션에서 판단 필요.**
+
+## 현재 상태 (2026-07-06 새벽 기준, 컴퓨터 과부하로 세션이 여러 번 끊겨 자주 갱신 중)
 
 - [x] Phase 0: 환경설정, 저장소 스캐폴딩, requirements.txt, README, pipeline.yaml (커밋+push 완료)
 - [x] AIHub API 키 검증 완료 (datasetkey=163 파일트리 조회 성공, 사용자 제공 파일키와 일치 확인)
@@ -114,10 +141,31 @@ Phase 3 PPE 학습 파이프라인을 먼저 검증하고, 필요하면 나머�
       검증 수준이 낮음을 안내했더니 사용자가 **HD-GCN(Jho-Yonsei/HD-GCN, ICCV 2023,
       167 star, MIT license, 2s-AGCN/CTR-GCN 계보)으로 대신 제안** → 확인 후 채택.
       **아직 실제 학습 코드 통합/그래프 설정은 안 함** — 다음 세션 작업.
+- [x] **HD-GCN을 git submodule로 전환 완료** (`git submodule add`, `.gitmodules` 커밋됨).
+      third_party/는 이제 submodule 방식으로 관리(사용자 요청). `.gitignore`의 `third_party/`
+      항목은 주석 처리.
+- [x] **keypoint 16개 점 관절 매핑을 실제 이미지로 시각화해 추론 완료**
+      (`docs/keypoint_mapping.md`, `results/figures/keypoint_index_mapping_frame{7,15}.png`).
+      "중심선 4개(코/목/척추/골반) + 좌우대칭 6종×2=12" 패턴으로 16개가 맞아떨어짐을
+      발견. **단 2프레임만 검증, 확정 아님** — HD-GCN 그래프 설정 전 추가 검증 권장.
+- [x] **"추적만" vs "keypoint 전환감지 병행" 비교 데모 완료**
+      (`scripts/demo_tracking_vs_transition.py`). 실측: 443프레임 중 YOLO 탐지 실패
+      **224건(50.6%)**, 그중 **29건**은 keypoint 기반 전환감지가 대신 잡아냄. 나머지
+      195건은 낙상과 무관한 이유로 탐지 실패(원인 미조사). 결과: `results/RESULTS.md`,
+      예시 이미지 `results/figures/compare_tracking_miss_transition_catches.png`.
+      **2026-07-06 수정 진행 중(미완료, 미커밋)**: 사용자 피드백 반영 —
+      (a) 아래쪽(keypoint) 오버레이에도 bbox를 그려서 위/아래를 "박스 vs 박스"로
+      직접 비교 가능하게 함, (b) 합본 영상뿐 아니라 tracking_only.mp4/transition_only.mp4
+      개별 저장도 추가. **코드는 고쳤지만 컴퓨터가 다시 꺼져서 재실행 결과 확인 전.**
+      다음 세션에서 `python scripts/demo_tracking_vs_transition.py` 재실행부터 할 것.
+- [~] **PPE(안전모) YOLO 학습 착수 중** — 물류센터 라벨/이미지는 이미 받아둠
+      (`data/raw/ppe_construction_aihub163/labels/train`, `images/train`). **라벨 포맷을
+      아직 열어보지 못함**(다음 세션 최우선 작업 — bbox 좌표 형식, 클래스 목록 확인 후
+      `scripts/convert_aihub163_to_yolo.py` 작성).
 - [ ] NLG 방식 3-way 비교 계획 확정: 템플릿(Jinja2) / Gemini API / Ollama 로컬 — 사용자 요청,
       Phase 2~3 완료 후 착수 예정. API 키는 사용자가 직접 발급. **아직 코드 착수 전.**
 - [ ] Phase 2 나머지(HD-GCN 실제 학습 — v1/v2 데이터 각각, ablation 비교, 1D-CNN-LSTM,
-      RGB baseline), Phase 3~7: 미착수
+      RGB baseline), Phase 3(PPE 학습 진행 중, 구역침입 미착수), Phase 4~7: 미착수
 
 ## 문제-해결 기록 (사용자 요청 — "내가 문제를 해결한 방법"으로 보고서에 쓸 것)
 
@@ -185,14 +233,22 @@ import zipfile; z = zipfile.ZipFile(path); z.testzip()  # None이면 정상, 예
 재개 시 이 두 파일이 받아졌는지 먼저 확인(zip 무결성 검사)하고, 안 받아졌으면 다시 세션에서
 시도하지 말고 사용자에게 직접 받아달라고 요청할 것.
 
-## 다음 세션에서 할 일 (재개 체크리스트)
+## 다음 세션에서 할 일 (재개 체크리스트) — 2026-07-06 새벽 기준 최신
 
-1. 넘어짐 원천(filekey 559794)/물류센터 val 원천(filekey 559938) 다운로드가 사용자 쪽에서
-   끝났는지 확인(zip 무결성 검사). 안 끝났으면 세션에서 다시 시도하지 말고 사용자에게 요청.
-2. 키포인트 라벨 전수(23,840개 × 4카테고리) path별 그룹/프레임간격 분석
-   (`keypoints/train/labels`의 4개 zip 압축 해제 후 분석 — 아직 안 함)
-3. 위 분석 결과로 `scripts/convert_aihub163_keypoints_to_pyskl.py` 작성
-4. Phase 2 나머지: pose 추출기, 1D-CNN-LSTM, ST-GCN(pyskl), RGB baseline 구현 및 비교
-5. TRACK_LOST → best-effort pose 추출 오케스트레이션 (`docs/fall_detection_design.md` 3.3절
+1. **git status 먼저 확인** — `src/detection_tracking/tracker.py`,
+   `scripts/demo_tracking_vs_transition.py` 수정이 아직 미커밋 상태일 수 있음.
+2. 넘어짐 원천(filekey 559794)/물류센터 val 원천(filekey 559938) 다운로드가 사용자 쪽에서
+   끝났는지 확인(zip 무결성 검사, 위 표 참고). 안 끝났으면 세션에서 다시 시도하지 말 것.
+3. `empty_cache()` 관련 사용자 반론(위 "컴퓨터가 반복적으로 꺼짐" 절 참고) — 유지할지
+   제거할지 판단하고, 필요하면 되돌릴 것.
+4. `python scripts/demo_tracking_vs_transition.py` 재실행해서 수정된 버전(박스 vs 박스
+   비교, 개별 영상 3개 저장) 결과 확인 후 커밋.
+5. **PPE 라벨 포맷 확인부터 시작** — `data/raw/ppe_construction_aihub163/labels/train`
+   압축 해제해서 bbox 좌표 형식/클래스 목록 확인 → `scripts/convert_aihub163_to_yolo.py`
+   작성 → `scripts/train_ppe_yolo.py`로 학습.
+6. 키포인트 라벨 전수(23,840개 × 4카테고리) path별 그룹/프레임간격 분석은 이미 완료됨
+   (`results/RESULTS.md`, `docs/data_preprocessing.md` 참고) — 재분석 불필요.
+7. HD-GCN을 실제 학습 코드에 연결(그래프 설정에 `docs/keypoint_mapping.md`의 추론
+   매핑 사용, v1/v2 데이터 각각으로 학습해 ablation 비교)
+8. TRACK_LOST → best-effort pose 추출 오케스트레이션 (`docs/fall_detection_design.md` 3.3절
    설계는 되어 있으나 코드 미작성)
-6. Phase 3(PPE/구역침입) 착수 — 물류센터 데이터는 이미 받아둠(images/train, labels/train)
