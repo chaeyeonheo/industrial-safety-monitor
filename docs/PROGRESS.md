@@ -93,13 +93,31 @@ Phase 3 PPE 학습 파이프라인을 먼저 검증하고, 필요하면 나머�
   - GPU 명시 강제 완료: `PersonTracker`가 이제 device를 자동감지에 맡기지 않고 명시적으로
     CUDA(device="0")를 선택하며 실제 사용 디바이스를 로그로 출력함(사용자가 "CPU로 몰래
     떨어지지 않게 해달라"고 요청해서 반영).
-- [x] 키포인트 라벨 → pyskl 포맷 변환 스크립트 (`scripts/convert_aihub163_keypoints_to_pyskl.py`)
-      **완료, 실행 검증 완료.** 아래 "문제-해결 기록" 절에 시행착오 상세 기록.
-      결과물: `data/processed/fall_keypoints/train_windows.pkl` (6687개 윈도우, gitignore 대상 —
-      로컬에만 존재, 재실행하면 다시 생성됨).
+- [x] 키포인트 라벨 → pyskl 포맷 변환 스크립트 v1 (`scripts/convert_aihub163_keypoints_to_pyskl.py`)
+      **완료, 실행 검증 완료.** 결과물: `data/processed/fall_keypoints/train_windows.pkl`
+      (6687개 윈도우, gitignore 대상 — 로컬에만 존재, 재실행하면 다시 생성됨).
+      **v1의 근본 한계를 사용자가 지적**: 영상 하나 전체(최대 4000+프레임)에 폴더
+      단위 라벨(예: "낙상")을 그대로 붙이는데, 실측해보니 실제 "누운 자세" 프레임은
+      전체의 18.3%뿐이라 대부분의 윈도우가 "서 있는 모습"인데 "낙상"으로 잘못
+      라벨링됐을 가능성이 높음.
+- [x] **v2 구현 완료**: Stage A 휴리스틱(종횡비 급변)을 정답 keypoint에 직접 적용해
+      실제 전환 순간을 검출하는 `scripts/convert_aihub163_keypoints_to_pyskl_transition.py`.
+      v1은 그대로 보존(사용자가 나중에 ablation 비교 예정). 결과: 양성 1506개 +
+      정상(normal, 지금까지 없던 클래스) 1209개 = 총 2715개. 단 낙상/넘어짐은 전환이
+      500건+ 검출되는데 부딪힘/물체에맞음은 164~193건뿐이라(둘 다 "눕는 자세"까지
+      안 갈 수 있어서) 카테고리별 검출 편향이 있음 — 이것도 한계로 기록해둠.
+  - **`docs/data_preprocessing.md` 작성 완료** — v1/v2 시행착오 전체를 보고서용으로
+    상세 기록(사용자가 나중에 이용할 것이라 요청).
+- [x] **HD-GCN(ICCV 2023) `third_party/HD-GCN`에 clone 완료**. 원래 지시문은
+      ST-GCN/CTR-GCN(pyskl)을 지정했지만, 사용자가 먼저 "HPI-GCN"(github.com/lizaowo/HPI-GCN,
+      star 6개 미검증 소규모 저장소)을 제안 → 구조/코드 확인 후 별문제는 없었으나
+      검증 수준이 낮음을 안내했더니 사용자가 **HD-GCN(Jho-Yonsei/HD-GCN, ICCV 2023,
+      167 star, MIT license, 2s-AGCN/CTR-GCN 계보)으로 대신 제안** → 확인 후 채택.
+      **아직 실제 학습 코드 통합/그래프 설정은 안 함** — 다음 세션 작업.
 - [ ] NLG 방식 3-way 비교 계획 확정: 템플릿(Jinja2) / Gemini API / Ollama 로컬 — 사용자 요청,
       Phase 2~3 완료 후 착수 예정. API 키는 사용자가 직접 발급. **아직 코드 착수 전.**
-- [ ] Phase 2 나머지(ST-GCN 실제 학습, 1D-CNN-LSTM, RGB baseline), Phase 3~7: 미착수
+- [ ] Phase 2 나머지(HD-GCN 실제 학습 — v1/v2 데이터 각각, ablation 비교, 1D-CNN-LSTM,
+      RGB baseline), Phase 3~7: 미착수
 
 ## 문제-해결 기록 (사용자 요청 — "내가 문제를 해결한 방법"으로 보고서에 쓸 것)
 

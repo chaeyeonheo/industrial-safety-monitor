@@ -145,3 +145,53 @@ label, img_shape, original_shape, total_frames, keypoint, keypoint_score) 충족
 **미해결**: AIHub 16-keypoint가 COCO-17 등 표준 스켈레톤 레이아웃과 어떻게
 대응되는지 공식 문서를 아직 확보하지 못해, pyskl 학습에 필요한 Graph(인접행렬)
 설정은 아직 만들지 못함 — 원본 16개 인덱스를 그대로 보존만 해둔 상태.
+
+**⚠️ v1의 근본 한계 (사용자 지적, 2026-07-06 실측으로 확인)**: v1은 영상 하나
+전체(최대 4000+프레임)를 기계적으로 30프레임씩 잘라 그 영상의 폴더 카테고리
+라벨을 그대로 붙인다. 그런데 `S2-N4601M00001`(3995프레임)의 keypoint bbox
+가로/세로 비율을 프레임 순서대로 10구간으로 나눠 보면:
+
+```
+구간0: 0.96  구간1: 0.83  구간2: 0.94  구간3: 1.00  구간4: 0.83
+구간5: 0.86  구간6: 0.87  구간7: 0.90  구간8: 1.00  구간9: 0.90
+```
+
+영상 전체에 걸쳐 고르게 섞여 있고 "누움"(ratio>1.3)으로 볼 수 있는 프레임은
+**18.3%뿐**이다. 즉 영상 하나에 낙상 동작이 여러 번 반복 시연되고 나머지는 서
+있거나 회복하는 구간인데, 라벨 JSON에는 프레임 단위 상태 필드가 없다
+(`data ID`, `middle classification`, `class`, `point` 네 개뿐이고 `class`는
+프레임마다 바뀌는 게 아니라 영상 하나 전체에서 고정값). 그래서 v1의 윈도우
+상당수는 "그냥 서 있는 모습"인데 "낙상"으로 잘못 라벨링됐을 가능성이 높다.
+상세 원인 분석과 대안 설계는 `docs/data_preprocessing.md` 참고.
+
+## Phase 2: pyskl 변환 스크립트 v2 — 전환 감지 기반 (v1과 별도 보존, ablation용)
+
+**실행 명령**: `python scripts/convert_aihub163_keypoints_to_pyskl_transition.py`
+
+v1의 한계를 보완하기 위해 Stage A 휴리스틱(`aspect_ratio_delta_threshold=0.5`,
+`window_frames=15`, `src/fall_detection/heuristic_trigger.py`와 동일 임계값)을
+**정답 keypoint 시퀀스에 직접 적용**해 영상 안에서 실제 "서 있다가 눕는" 전환
+순간을 자동 검출하고, 그 주변만 양성(낙상) 윈도우로, 전환에서 먼 구간을
+음성("normal", 낙상 아님) 윈도우로 추출했다.
+
+**실측 결과**:
+
+| 카테고리 | 검출된 전환 수 | 양성 윈도우 | 음성(normal) 윈도우 |
+|---|---|---|---|
+| falling_from_height | 581 | 581 | 34 |
+| struck_by_collision | 164 | 164 | 559 |
+| trip_and_fall | 568 | 568 | 49 |
+| struck_by_object | 193 | 193 | 567 |
+| **합계** | 1506 | **1506** | **1209** |
+
+총 2715개 윈도우 (`data/processed/fall_keypoints_transition/train_windows_transition.pkl`,
+검증 완료: `keypoint` shape `(1, 30, 16, 2)`).
+
+**흥미로운 실측 패턴**: falling_from_height/trip_and_fall은 전환이 카테고리당
+500건 이상 검출된 반면, struck_by_collision/struck_by_object는 164~193건뿐이다.
+"bbox 종횡비가 급격히 커진다(서 있다가 눕는다)"는 신호가 낙상·넘어짐에는 잘
+맞지만, 부딪힘·물체에맞음은 반드시 눕는 자세로 이어지지 않을 수 있어(맞고
+휘청이거나 웅크리는 정도로 끝날 수 있음) 이 신호로는 잘 안 잡힐 수 있다는
+뜻이다. **즉 이 v2 방식도 카테고리에 따라 검출 편향이 있을 수 있어, v1과의
+다운스트림 분류 성능 비교(ablation)가 필요하다** — 사용자가 시간 여유가 되면
+진행하기로 함.
