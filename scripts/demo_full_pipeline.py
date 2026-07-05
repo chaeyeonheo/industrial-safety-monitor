@@ -18,6 +18,9 @@ import cv2
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.pipeline import SafetyMonitorPipeline  # noqa: E402
 from src.nlg.template_generator import ITEM_NAME_KR  # noqa: E402
+from src.event_timeline import save_event_timeline  # noqa: E402
+
+DEMO_FPS = 5.0
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PPE_WEIGHTS = REPO_ROOT / "outputs/ppe_yolo_runs/train/weights/best.pt"
@@ -122,13 +125,17 @@ def run_one(name: str, frame_dir: Path, max_frames: int) -> None:
 
     print(f"\n=== [{name}] {len(frame_paths)}프레임 ===")
     pipeline = SafetyMonitorPipeline(
-        ppe_weights=str(PPE_WEIGHTS), fps=5.0, frame_size=(w, h), cooldown_seconds=10.0,
+        ppe_weights=str(PPE_WEIGHTS), fps=DEMO_FPS, frame_size=(w, h), cooldown_seconds=10.0,
         ppe_decision_window_frames=6,
     )
 
     # 추적 모델 -> PPE 모델 순으로 완전히 분리 실행(둘을 동시에 GPU에 띄우지
     # 않음). 결과가 다 나온 뒤에는 GPU 없이 오버레이만 그린다.
     results = pipeline.run_offline([str(p) for p in frame_paths])
+
+    # VQA 웹앱이 쓸 이벤트 타임라인(초 단위 타임스탬프 포함) JSON 저장
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    save_event_timeline(results, DEMO_FPS, OUTPUT_DIR / f"event_timeline_{name}.json")
 
     output_video = OUTPUT_DIR / f"full_pipeline_demo_{name}.mp4"
     writer = cv2.VideoWriter(str(output_video), cv2.VideoWriter_fourcc(*"mp4v"), 5, (w, h))

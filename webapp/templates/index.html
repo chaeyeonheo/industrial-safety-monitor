@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Industrial Safety Monitor — VQA</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark"></span>
+      <span class="brand-text">Industrial Safety Monitor</span>
+    </div>
+    <select id="source-select" class="source-select">
+      {% for s in sources %}
+      <option value="{{ s }}">{{ s }}</option>
+      {% endfor %}
+    </select>
+  </header>
+
+  <main class="layout">
+    <section class="video-panel">
+      <video id="video-player" controls autoplay muted loop playsinline>
+        <source id="video-source" src="" type="video/mp4">
+      </video>
+    </section>
+
+    <section class="chat-panel">
+      <div class="chat-header">
+        <h2>이벤트 질의응답</h2>
+        <p class="chat-sub">이 영상에서 실제로 감지된 이벤트만 근거로 답합니다</p>
+      </div>
+      <div id="chat-log" class="chat-log">
+        <div class="msg assistant">
+          <div class="bubble">안녕하세요. 이 영상에서 발생한 낙상이나 보호구 미착용에 대해
+            물어보세요.<br>예: <em>"낙상이 언제 발생했나요?"</em>,
+            <em>"몇 번 작업자가 낙상했나요?"</em></div>
+        </div>
+      </div>
+      <form id="chat-form" class="chat-input-row">
+        <input id="chat-input" type="text" placeholder="질문을 입력하세요..." autocomplete="off">
+        <button type="submit" aria-label="보내기">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 2 11 13" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M22 2 15 22 11 13 2 9z" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+      </form>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
