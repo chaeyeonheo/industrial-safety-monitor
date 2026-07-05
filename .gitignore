@@ -21,5 +21,6 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# Third-party repos cloned for reuse (pyskl, RTFM, ByteTrack, etc.)
-third_party/
+# 외부 오픈소스는 third_party/ 아래 git submodule로 관리한다(.gitmodules 참고).
+# 별도 clone을 만들 경우에만 아래 주석을 풀어 임시로 무시.
+# third_party/

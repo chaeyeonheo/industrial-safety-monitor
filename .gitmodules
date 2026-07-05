@@ -1,0 +1,3 @@
+[submodule "third_party/HD-GCN"]
+	path = third_party/HD-GCN
+	url = https://github.com/Jho-Yonsei/HD-GCN.git
