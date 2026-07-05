@@ -84,10 +84,13 @@ Phase 3 PPE 학습 파이프라인을 먼저 검증하고, 필요하면 나머�
     (`near_frame_edge`)도 추가함. 가려짐(occlusion)은 대부분 ByteTrack 자체 lost-buffer가
     흡수하므로 우리 쪽까지 오는 TRACK_LOST는 "화면 이탈" 아니면 "진짜 낙상/긴 가려짐" 둘 중
     하나라고 가정, 최종 확인은 Stage B(포즈 분류기, 아직 미구현) 또는 사람 확인 몫으로 둠.
-  - `scripts/demo_fall_trigger.py` 작성 완료했으나 **아직 실행/검증 못 함** (컴퓨터 재시작으로
-    중단). 다음 세션에서 제일 먼저 이걸 실행해서 실제 트리거가 뜨는지 확인할 것.
-  - **다음 세션 필수 작업**: docs/fall_detection_design.md (아래 항목) 아직 작성 전 —
-    사용자가 보고서용으로 상세히 남겨달라고 요청함, 반드시 작성할 것.
+  - `scripts/demo_fall_trigger.py` 실행 완료: 443프레임 중 트리거 3건(vertical_velocity_spike
+    2건, track_lost 1건). track_lost 1건은 near_frame_edge=True로 필터가 의도대로 낮은
+    신뢰도(0.2)를 매김. 실측치는 `results/RESULTS.md` Phase 2 절 참고.
+  - **docs/fall_detection_design.md 작성 완료** (보고서용 상세 설계 문서, 커밋 완료).
+  - GPU 명시 강제 완료: `PersonTracker`가 이제 device를 자동감지에 맡기지 않고 명시적으로
+    CUDA(device="0")를 선택하며 실제 사용 디바이스를 로그로 출력함(사용자가 "CPU로 몰래
+    떨어지지 않게 해달라"고 요청해서 반영).
 - [ ] NLG 방식 3-way 비교 계획 확정: 템플릿(Jinja2) / Gemini API / Ollama 로컬 — 사용자 요청,
       Phase 2~3 완료 후 착수 예정. API 키는 사용자가 직접 발급. **아직 코드 착수 전.**
 - [ ] Phase 2 나머지(1D-CNN-LSTM/ST-GCN/RGB baseline), Phase 3~7: 미착수
@@ -106,23 +109,24 @@ import zipfile; z = zipfile.ZipFile(path); z.testzip()  # None이면 정상, 예
 | 키포인트 라벨 val 4종 | ✅ 완료 (검증됨) |
 | 키포인트 원천 val: 넘어짐+떨어짐 (~4GB) | ✅ 완료 (검증됨, `keypoints/val/source/`) |
 | 키포인트 원천 train: 떨어짐 (~16GB) | ✅ 완료 (검증됨) |
-| 키포인트 원천 train: 넘어짐 (~15GB) | ❌ 계속 실패 중 (3번째 재시도 진행 중, filekey 559794) |
+| 키포인트 원천 train: 넘어짐 (~15GB) | ❌ 3번 연속 실패(다운로드 도중 컴퓨터가 매번 꺼짐). **사용자가 본인 터미널(Git Bash)에서 직접 재시도 중** (filekey 559794, datasetkey 163) |
 | 물류센터 라벨 train/val | ✅ 완료 (검증됨) |
 | 물류센터 원천 train (반도체클러스터, ~17GB) | ✅ 완료 (검증됨, `images/train/`) |
-| 물류센터 원천 val (~2GB) | ❌ 실패, 아직 재시도 못 함 (filekey 559938) |
+| 물류센터 원천 val (~2GB) | ❌ 실패. **사용자가 직접 재시도 중** (filekey 559938) |
+
+**주의**: 위 두 건은 세션(백그라운드 bash)에서 시도할 때마다 컴퓨터가 clock_watchdog_timeout으로
+꺼지는 패턴이 반복되어(2026-07-05 밤) 사용자가 본인 터미널에서 직접 받는 것으로 전환함.
+재개 시 이 두 파일이 받아졌는지 먼저 확인(zip 무결성 검사)하고, 안 받아졌으면 다시 세션에서
+시도하지 말고 사용자에게 직접 받아달라고 요청할 것.
 
 ## 다음 세션에서 할 일 (재개 체크리스트)
 
-1. 위 표에서 ❌인 것들(넘어짐 원천 filekey 559794, 물류센터 val 원천 filekey 559938) 다운로드
-   상태 확인 후 미완료면 재시도. **한 번에 하나씩** 받는 게 안전함(여러 개 묶으면 중간에
-   끊겼을 때 뭐가 됐는지 파악하기 어려움).
-2. `python scripts/demo_fall_trigger.py` 실행해서 Stage A 트리거가 실제로 뜨는지 확인하고
-   결과를 `results/RESULTS.md`에 기록
-3. `docs/fall_detection_design.md` 작성 (사용자가 보고서용으로 요청함 — 왜 낙상/PPE를
-   완전히 분리했는지, 공유 백본은 어디까지인지, 각 브랜치가 어떻게 동작하는지, Stage A
-   트리거 3종 설계 근거, TRACK_LOST의 occlusion/화면이탈 오탐 처리 방식까지 상세히)
-4. 키포인트 라벨 전수(23,840개 × 4카테고리) path별 그룹 분석 완료 후
-   `scripts/convert_aihub163_keypoints_to_pyskl.py` 작성
-5. Phase 2 나머지: 1D-CNN-LSTM, ST-GCN(pyskl), RGB baseline 구현 및 비교
-6. 지금까지 미커밋 상태인 Stage A 코드(`src/fall_detection/`, `scripts/demo_fall_trigger.py`,
-   `configs/pipeline.yaml` 수정분) 커밋
+1. 넘어짐 원천(filekey 559794)/물류센터 val 원천(filekey 559938) 다운로드가 사용자 쪽에서
+   끝났는지 확인(zip 무결성 검사). 안 끝났으면 세션에서 다시 시도하지 말고 사용자에게 요청.
+2. 키포인트 라벨 전수(23,840개 × 4카테고리) path별 그룹/프레임간격 분석
+   (`keypoints/train/labels`의 4개 zip 압축 해제 후 분석 — 아직 안 함)
+3. 위 분석 결과로 `scripts/convert_aihub163_keypoints_to_pyskl.py` 작성
+4. Phase 2 나머지: pose 추출기, 1D-CNN-LSTM, ST-GCN(pyskl), RGB baseline 구현 및 비교
+5. TRACK_LOST → best-effort pose 추출 오케스트레이션 (`docs/fall_detection_design.md` 3.3절
+   설계는 되어 있으나 코드 미작성)
+6. Phase 3(PPE/구역침입) 착수 — 물류센터 데이터는 이미 받아둠(images/train, labels/train)
