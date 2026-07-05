@@ -63,30 +63,66 @@ Phase 3 PPE 학습 파이프라인을 먼저 검증하고, 필요하면 나머�
   전체 23,840개 파일에 대한 path별 그룹 크기/프레임 범위 전수 분석은 아직 미완료
   (다음 세션에서 이어서 할 것 — `scripts/convert_aihub163_keypoints_to_pyskl.py` 작성 전에 필요).
 
-## 현재 상태 (2026-07-05 기준)
+## 현재 상태 (2026-07-05 23:00 기준, 컴퓨터 과부하로 세션이 여러 번 끊겨 자주 갱신 중)
 
-- [x] Phase 0: 환경설정, 저장소 스캐폴딩, requirements.txt, README, pipeline.yaml (커밋 완료, push 완료)
+- [x] Phase 0: 환경설정, 저장소 스캐폴딩, requirements.txt, README, pipeline.yaml (커밋+push 완료)
 - [x] AIHub API 키 검증 완료 (datasetkey=163 파일트리 조회 성공, 사용자 제공 파일키와 일치 확인)
-- [~] AIHub 데이터 다운로드 진행 중 (백그라운드 2개 프로세스, 위 테이블 참고)
-  - 하나는 아직 명령/프로세스 상태를 세션 재시작 후 알 수 없음 → 재개 시 `ls -la` 로 실제
-    다운로드된 파일 존재 여부/크기를 먼저 확인해서 어디까지 받았는지 판단할 것
-  - 2026-07-05 20:50 기준: 키포인트 원천(넘어짐+떨어짐, ~30GB) 중 약 4.8GB 다운로드됨
-- [~] Phase 1: 탐지+추적 공유 백본 — **코드 완료** (`src/detection_tracking/tracker.py`,
-      `scripts/demo_tracking.py`), YOLO11n 가중치는 `weights/yolo11n.pt`로 이동해둠.
-      정지이미지(bus.jpg) sanity check 실행 완료(사람 4명 정탐, `results/RESULTS.md` 참고).
-      **비디오 기반 트랙 ID 일관성 검증은 미실행** — 신뢰 가능한 데모 영상 URL이 없어
-      AIHub 키포인트 원천영상(넘어짐/떨어짐) 다운로드 완료를 기다리는 중.
+- [x] Phase 1: 탐지+추적 공유 백본 — **완전히 완료, 커밋 완료.**
+  - `src/detection_tracking/tracker.py` (YOLO11n + ByteTrack, `weights/yolo11n.pt`)
+  - 정지이미지(bus.jpg) sanity check: 사람 4명 정탐
+  - **실제 AIHub 낙상 시퀀스(443프레임)로 비디오 트래킹 검증도 완료.** 핵심 발견:
+    (1) 쓰러진/엎드린 자세는 YOLO11n이 아예 탐지 못함(bbox 없음) — 서 있을 때는 잘 잡힘
+    (2) 라벨용 프레임은 간격이 불균일(중앙값 7, 최대 60프레임)해서 ByteTrack ID가 자주 끊김
+        (트래커 버그 아니라 데이터 특성)
+    상세: `results/RESULTS.md`, 스크린샷: `results/figures/tracking_demo_frame50.png`(정탐),
+    `tracking_demo_frame150.png`(탐지 실패 사례)
+- [~] **Phase 2 착수함(진행 중, 미완료, 미커밋)**: Stage A 휴리스틱 트리거
+  - `src/fall_detection/heuristic_trigger.py` 작성 완료: aspect_ratio 급증 / 수직 하강 속도 /
+    **TRACK_LOST(탐지 유실)** 3가지 트리거. TRACK_LOST는 위 (1)번 발견 때문에 추가함 — 서
+    있으면 감지되던 track이 쓰러지는 순간 bbox 자체가 사라지는 걸 확인했기 때문.
+  - 화면 가장자리 근처에서 사라진 경우(화면 이탈 가능성)는 confidence_hint를 낮추는 필터
+    (`near_frame_edge`)도 추가함. 가려짐(occlusion)은 대부분 ByteTrack 자체 lost-buffer가
+    흡수하므로 우리 쪽까지 오는 TRACK_LOST는 "화면 이탈" 아니면 "진짜 낙상/긴 가려짐" 둘 중
+    하나라고 가정, 최종 확인은 Stage B(포즈 분류기, 아직 미구현) 또는 사람 확인 몫으로 둠.
+  - `scripts/demo_fall_trigger.py` 작성 완료했으나 **아직 실행/검증 못 함** (컴퓨터 재시작으로
+    중단). 다음 세션에서 제일 먼저 이걸 실행해서 실제 트리거가 뜨는지 확인할 것.
+  - **다음 세션 필수 작업**: docs/fall_detection_design.md (아래 항목) 아직 작성 전 —
+    사용자가 보고서용으로 상세히 남겨달라고 요청함, 반드시 작성할 것.
 - [ ] NLG 방식 3-way 비교 계획 확정: 템플릿(Jinja2) / Gemini API / Ollama 로컬 — 사용자 요청,
-      Phase 2~3 완료 후 착수 예정. API 키는 사용자가 직접 발급.
-- [ ] Phase 2~7: 미착수
+      Phase 2~3 완료 후 착수 예정. API 키는 사용자가 직접 발급. **아직 코드 착수 전.**
+- [ ] Phase 2 나머지(1D-CNN-LSTM/ST-GCN/RGB baseline), Phase 3~7: 미착수
+
+## AIHub 다운로드 현재 상태 (2026-07-05 23:00, 반복 확인 필요)
+
+컴퓨터가 여러 번 꺼지면서 백그라운드 다운로드가 예고 없이 중단되는 일이 반복됨.
+**"완료" 메시지/exit code 0을 믿지 말고 매번 아래처럼 zip 무결성을 직접 검증할 것**:
+```python
+import zipfile; z = zipfile.ZipFile(path); z.testzip()  # None이면 정상, 예외면 손상
+```
+
+| 데이터 | 상태 |
+|---|---|
+| 키포인트 라벨 train 4종 | ✅ 완료 (검증됨) |
+| 키포인트 라벨 val 4종 | ✅ 완료 (검증됨) |
+| 키포인트 원천 val: 넘어짐+떨어짐 (~4GB) | ✅ 완료 (검증됨, `keypoints/val/source/`) |
+| 키포인트 원천 train: 떨어짐 (~16GB) | ✅ 완료 (검증됨) |
+| 키포인트 원천 train: 넘어짐 (~15GB) | ❌ 계속 실패 중 (3번째 재시도 진행 중, filekey 559794) |
+| 물류센터 라벨 train/val | ✅ 완료 (검증됨) |
+| 물류센터 원천 train (반도체클러스터, ~17GB) | ✅ 완료 (검증됨, `images/train/`) |
+| 물류센터 원천 val (~2GB) | ❌ 실패, 아직 재시도 못 함 (filekey 559938) |
 
 ## 다음 세션에서 할 일 (재개 체크리스트)
 
-1. `data/raw/ppe_construction_aihub163/` 하위 각 폴더에 실제로 몇 GB가 받아졌는지 확인
-   (`du -sh` 또는 `ls -la`)
-2. 다운로드가 끊겼다면 위 파일키 테이블로 이어받기
-3. 키포인트 원천영상(넘어짐/떨어짐)이 받아졌으면 `python scripts/demo_tracking.py --source <경로>`로
-   비디오 트랙 ID 일관성 실측 후 `results/RESULTS.md`의 "비디오 기반 트랙 ID 일관성 검증" 절 채우기
+1. 위 표에서 ❌인 것들(넘어짐 원천 filekey 559794, 물류센터 val 원천 filekey 559938) 다운로드
+   상태 확인 후 미완료면 재시도. **한 번에 하나씩** 받는 게 안전함(여러 개 묶으면 중간에
+   끊겼을 때 뭐가 됐는지 파악하기 어려움).
+2. `python scripts/demo_fall_trigger.py` 실행해서 Stage A 트리거가 실제로 뜨는지 확인하고
+   결과를 `results/RESULTS.md`에 기록
+3. `docs/fall_detection_design.md` 작성 (사용자가 보고서용으로 요청함 — 왜 낙상/PPE를
+   완전히 분리했는지, 공유 백본은 어디까지인지, 각 브랜치가 어떻게 동작하는지, Stage A
+   트리거 3종 설계 근거, TRACK_LOST의 occlusion/화면이탈 오탐 처리 방식까지 상세히)
 4. 키포인트 라벨 전수(23,840개 × 4카테고리) path별 그룹 분석 완료 후
    `scripts/convert_aihub163_keypoints_to_pyskl.py` 작성
-5. Phase 2(낙상 감지) 착수: heuristic/1D-CNN-LSTM/ST-GCN/RGB baseline 4종 비교
+5. Phase 2 나머지: 1D-CNN-LSTM, ST-GCN(pyskl), RGB baseline 구현 및 비교
+6. 지금까지 미커밋 상태인 Stage A 코드(`src/fall_detection/`, `scripts/demo_fall_trigger.py`,
+   `configs/pipeline.yaml` 수정분) 커밋

@@ -57,10 +57,17 @@ class PersonTracker:
         self.conf_threshold = conf_threshold
         self.device = device
 
-    def track_stream(self, source: str | Path | int) -> Iterator[list[Track]]:
-        """비디오/이미지 시퀀스/카메라 인덱스를 받아 프레임별 Track 리스트를 yield한다."""
+    def track_stream(self, source: str | Path | int | list[str]) -> Iterator[list[Track]]:
+        """비디오 파일 / 카메라 인덱스 / 정렬된 이미지 경로 리스트(프레임 시퀀스)를 받아
+        프레임별 Track 리스트를 yield한다. 리스트를 넘기면 그 순서를 프레임 순서로 취급한다."""
+        if isinstance(source, list):
+            resolved_source = [str(p) for p in source]
+        elif isinstance(source, int):
+            resolved_source = source
+        else:
+            resolved_source = str(source)
         results = self.model.track(
-            source=str(source) if not isinstance(source, int) else source,
+            source=resolved_source,
             classes=[COCO_PERSON_CLASS_ID],
             conf=self.conf_threshold,
             tracker=self.tracker_cfg,

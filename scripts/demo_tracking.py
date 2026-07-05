@@ -45,17 +45,64 @@ def run_image_sanity_check() -> None:
     print(f"[sanity-check] saved overlay to {out_path}")
 
 
-def run_video_tracking(source: str, max_frames: int | None = None) -> None:
+TRACK_COLORS = [
+    (0, 255, 0), (255, 0, 0), (0, 165, 255), (255, 0, 255),
+    (0, 255, 255), (255, 255, 0), (128, 0, 255), (0, 128, 255),
+]
+
+
+def _color_for(track_id: int) -> tuple[int, int, int]:
+    return TRACK_COLORS[track_id % len(TRACK_COLORS)]
+
+
+def run_video_tracking(source: str | Path, max_frames: int | None = None,
+                        save_overlay_name: str | None = None) -> None:
+    """source가 디렉토리면 그 안의 이미지들을 파일명 정렬 순서로 프레임 시퀀스 취급."""
+    src_path = Path(source)
+    if src_path.is_dir():
+        frame_paths = sorted(src_path.glob("*.jpg"))
+        stream_input: str | list[str] = [str(p) for p in frame_paths]
+        frame_lookup = frame_paths
+    else:
+        stream_input = str(source)
+        frame_lookup = None
+
     tracker = PersonTracker(conf_threshold=0.4)
     id_frame_ranges: dict[int, list[int]] = {}
 
-    for frame_idx, tracks in enumerate(tracker.track_stream(source)):
+    writer = None
+    if save_overlay_name and frame_lookup is not None:
+        FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+        first_img = cv2.imread(str(frame_lookup[0]))
+        h, w = first_img.shape[:2]
+        writer = cv2.VideoWriter(
+            str(FIGURES_DIR / save_overlay_name),
+            cv2.VideoWriter_fourcc(*"mp4v"), 5, (w, h),
+        )
+
+    frame_idx = -1
+    for frame_idx, tracks in enumerate(tracker.track_stream(stream_input)):
         if max_frames is not None and frame_idx >= max_frames:
             break
         for t in tracks:
             id_frame_ranges.setdefault(t.track_id, []).append(frame_idx)
 
+        if writer is not None:
+            img = cv2.imread(str(frame_lookup[frame_idx]))
+            for t in tracks:
+                x1, y1, x2, y2 = (int(v) for v in t.bbox)
+                color = _color_for(t.track_id)
+                cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
+                cv2.putText(img, f"id {t.track_id}", (x1, max(0, y1 - 8)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+            writer.write(img)
+
+    if writer is not None:
+        writer.release()
+        print(f"[video] overlay saved to {FIGURES_DIR / save_overlay_name}")
+
     print(f"[video] source={source}")
+    print(f"[video] total frames processed: {frame_idx + 1}")
     print(f"[video] unique track ids observed: {len(id_frame_ranges)}")
     for track_id, frames in sorted(id_frame_ranges.items()):
         print(f"  track_id={track_id} first_frame={frames[0]} last_frame={frames[-1]} n_frames={len(frames)}")
@@ -63,14 +110,16 @@ def run_video_tracking(source: str, max_frames: int | None = None) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", type=str, default=None, help="비디오 파일 경로. 생략 시 정지 이미지 sanity check만 실행")
+    parser.add_argument("--source", type=str, default=None,
+                         help="비디오 파일 경로 또는 정렬 가능한 프레임 이미지 디렉토리. 생략 시 정지 이미지 sanity check만 실행")
     parser.add_argument("--max-frames", type=int, default=None)
+    parser.add_argument("--save-overlay", type=str, default="tracking_demo_video.mp4")
     args = parser.parse_args()
 
     run_image_sanity_check()
 
     if args.source:
-        run_video_tracking(args.source, max_frames=args.max_frames)
+        run_video_tracking(args.source, max_frames=args.max_frames, save_overlay_name=args.save_overlay)
     else:
         print("[video] --source가 지정되지 않아 비디오 트래킹 검증은 건너뜁니다. "
               "AIHub 데이터 다운로드가 끝나면 실제 영상으로 재실행할 것.")

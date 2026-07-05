@@ -67,7 +67,7 @@ pip install -r requirements.txt
 ## 진행 상황 (Phase 체크리스트)
 
 - [x] Phase 0: 환경 설정
-- [~] Phase 1: 탐지+추적 공유 백본 (코드 완료, 정지이미지 sanity check 완료, 비디오 트랙 일관성 검증은 AIHub 데이터 다운로드 대기 중)
+- [x] Phase 1: 탐지+추적 공유 백본 (코드 완료, 정지이미지+실제 프레임 시퀀스 트래킹 검증 완료 — 단, 라벨용 희소 프레임이라 ID가 자주 끊김을 확인, `results/RESULTS.md` 참고)
 - [ ] Phase 2: 낙상 감지
 - [ ] Phase 3: PPE / 구역 침입
 - [ ] Phase 4: Weakly-supervised VAD 비교 (선택)
