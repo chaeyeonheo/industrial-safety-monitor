@@ -10,43 +10,112 @@
   <header class="topbar">
     <div class="brand">
       <span class="brand-mark"></span>
-      <span class="brand-text">Industrial Safety Monitor</span>
+      <div class="brand-copy">
+        <span class="brand-text">Industrial Safety Monitor</span>
+        <span class="brand-sub">Safety vision intelligence</span>
+      </div>
     </div>
-    <select id="source-select" class="source-select">
-      {% for s in sources %}
-      <option value="{{ s }}">{{ s }}</option>
-      {% endfor %}
-    </select>
+
+    <nav class="topnav" aria-label="Primary">
+      <a href="#stage">Overview</a>
+      <a href="#stage">Replay</a>
+      <a href="#assistant">Ask</a>
+    </nav>
+
+    <div class="topbar-controls">
+      <div class="control-meta">
+        <span class="control-label">Source</span>
+        <select id="source-select" class="source-select">
+          {% for s in sources %}
+          <option value="{{ s }}">{{ s }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
   </header>
 
-  <main class="layout">
-    <section class="video-panel">
-      <video id="video-player" controls autoplay muted loop playsinline>
-        <source id="video-source" src="" type="video/mp4">
-      </video>
+  <main class="page">
+    <section class="hero">
+      <p class="hero-kicker">Industrial safety / vision intelligence / VQA</p>
+      <h1>Unlocking safer worksites with grounded vision AI.</h1>
+      <p class="hero-copy">
+        Fall detection, PPE compliance, and timeline-based question answering in one compact
+        command surface.
+      </p>
     </section>
 
-    <section class="chat-panel">
-      <div class="chat-header">
-        <h2>이벤트 질의응답</h2>
-        <p class="chat-sub">이 영상에서 실제로 감지된 이벤트만 근거로 답합니다</p>
+    <section class="utility-row">
+      <div id="source-status" class="source-status">데모 source를 선택하거나 파일을 드롭하세요.</div>
+      <div id="drop-zone" class="drop-zone" role="button" tabindex="0" aria-label="비디오 파일 드롭 영역">
+        <div class="drop-title">mp4 + event_timeline json</div>
+        <div class="drop-sub">데모가 없으면 파일을 여기로 드롭</div>
+        <input id="file-input" class="file-input" type="file" multiple accept="video/*,.json">
       </div>
-      <div id="chat-log" class="chat-log">
-        <div class="msg assistant">
-          <div class="bubble">안녕하세요. 이 영상에서 발생한 낙상이나 보호구 미착용에 대해
-            물어보세요.<br>예: <em>"낙상이 언제 발생했나요?"</em>,
-            <em>"몇 번 작업자가 낙상했나요?"</em></div>
+    </section>
+
+    <section class="content-grid" id="stage">
+      <article class="stage">
+        <div class="stage-hero">
+          <div class="stage-copy">
+            <p class="eyebrow">Replay</p>
+            <h2>Industrial replay console</h2>
+            <p class="stage-desc">A compact, high-clarity surface for fall detection, PPE violations, and timeline-grounded QA.</p>
+          </div>
+          <div class="stage-badge">monitoring</div>
         </div>
-      </div>
-      <form id="chat-form" class="chat-input-row">
-        <input id="chat-input" type="text" placeholder="질문을 입력하세요..." autocomplete="off">
-        <button type="submit" aria-label="보내기">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M22 2 11 13" stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="M22 2 15 22 11 13 2 9z" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </button>
-      </form>
+
+        <div class="video-shell">
+          <video id="video-player" controls autoplay muted loop playsinline>
+            <source id="video-source" src="" type="video/mp4">
+          </video>
+        </div>
+
+        <div class="stage-footer">
+          <div class="footer-chip">데모 source 또는 드롭 파일 사용 가능</div>
+          <div class="footer-chip footer-chip--accent">영상과 타임라인을 같이 쓰면 질문 응답이 활성화됩니다</div>
+        </div>
+      </article>
+
+      <aside class="assistant-panel" id="assistant">
+        <div class="assistant-head">
+          <div>
+            <p class="eyebrow">Ask</p>
+            <h2>Query console</h2>
+            <p class="assistant-sub">이벤트 타임라인만 근거로 답합니다.</p>
+          </div>
+          <div class="assistant-pill">grounded</div>
+        </div>
+
+        <div class="quick-questions">
+          <button type="button" class="quick-chip" data-question="낙상이 언제 발생했나요?">낙상 시점</button>
+          <button type="button" class="quick-chip" data-question="몇 번 작업자가 낙상했나요?">낙상 작업자</button>
+          <button type="button" class="quick-chip" data-question="안전모 미착용은 있나요?">안전모 미착용</button>
+          <button type="button" class="quick-chip" data-question="누가 보호구를 안 썼나요?">미착용 작업자</button>
+        </div>
+
+        <div class="insight-panel" id="insight-panel">
+          <div class="insight-title">Timeline insight</div>
+          <div id="insight-text" class="insight-text">데모 source를 선택하거나 파일을 드롭하면 요약이 표시됩니다.</div>
+        </div>
+
+        <div id="chat-log" class="chat-log">
+          <div class="msg assistant">
+            <div class="bubble">안녕하세요. 이 영상에서 발생한 낙상이나 보호구 미착용에 대해
+              물어보세요.<br>예: <em>"낙상이 언제 발생했나요?"</em>,
+              <em>"몇 번 작업자가 낙상했나요?"</em></div>
+          </div>
+        </div>
+
+        <form id="chat-form" class="chat-input-row">
+          <input id="chat-input" type="text" placeholder="질문을 입력하세요..." autocomplete="off">
+          <button type="submit" aria-label="보내기">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 2 11 13" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M22 2 15 22 11 13 2 9z" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        </form>
+      </aside>
     </section>
   </main>
 

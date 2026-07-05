@@ -64,7 +64,7 @@ class SafetyMonitorPipeline:
         ppe_infer_every_n_frames: int = 3,
         fall_trigger_kwargs: dict | None = None,
         ppe_decision_window_frames: int = 3,
-        person_conf_threshold: float = 0.5,
+        person_conf_threshold: float = 0.35,
     ) -> None:
         self.ppe_weights = ppe_weights
         self.device = "0" if torch.cuda.is_available() else "cpu"
@@ -119,9 +119,14 @@ class SafetyMonitorPipeline:
         statuses_by_frame: list[list[PersonPPEStatus]] = []
         detection_count: dict[tuple[int, str], int] = defaultdict(int)
         frames_seen: dict[int, int] = defaultdict(int)
+        last_seen_frame: dict[int, int] = {}
         track_missing_items: dict[int, list[str]] = {}
+        # PPE 판정이 "확정되는 그 프레임"에 이벤트를 기록해야 event_timeline(VQA
+        # 근거자료)에도 남는다 — 예전엔 화면 표시만 하고 이벤트로는 안 남기는
+        # 버그가 있었음.
+        ppe_decision_events_by_frame: dict[int, list[tuple[int, str]]] = defaultdict(list)
 
-        for tracks, ppe_detections in zip(tracks_by_frame, ppe_detections_by_frame):
+        for frame_idx, (tracks, ppe_detections) in enumerate(zip(tracks_by_frame, ppe_detections_by_frame)):
             person_tracks = [(t.track_id, t.bbox) for t in tracks]
             statuses = check_ppe_compliance(person_tracks, ppe_detections)
             statuses_by_frame.append(statuses)
@@ -129,47 +134,63 @@ class SafetyMonitorPipeline:
                 track_id = status.track_id
                 if track_id in track_missing_items:
                     continue  # 이미 확정됨 — 다시 안 봄(과거 프레임 재판정 없음)
+                last_seen_frame[track_id] = frame_idx
                 frames_seen[track_id] += 1
                 for item in status.detected_items:
                     detection_count[(track_id, item)] += 1
                 if frames_seen[track_id] >= self.ppe_decision_window_frames:
-                    track_missing_items[track_id] = [
+                    missing = [
                         item for item in REQUIRED_ITEMS
                         if detection_count.get((track_id, item), 0) == 0
                     ]
+                    track_missing_items[track_id] = missing
+                    for item in missing:
+                        ppe_decision_events_by_frame[frame_idx].append((track_id, item))
 
-        # 관찰 프레임이 확정 창보다 짧게 끝난(중간에 사라진) track은 마지막에
-        # 있는 그대로로 확정한다.
+        # 관찰 프레임이 확정 창보다 짧게 끝난(중간에 사라진) track은 그 track이
+        # 실제로 마지막 보였던 프레임 기준으로 확정한다(영상 맨 마지막 프레임에
+        # 몰아넣지 않음 — 그러면 실제 발생 시점과 안 맞는 타임라인이 된다).
         for track_id, count in frames_seen.items():
             if track_id not in track_missing_items:
-                track_missing_items[track_id] = [
+                missing = [
                     item for item in REQUIRED_ITEMS
                     if detection_count.get((track_id, item), 0) == 0
                 ]
+                track_missing_items[track_id] = missing
+                for item in missing:
+                    ppe_decision_events_by_frame[last_seen_frame[track_id]].append((track_id, item))
 
         print("[pipeline] 4/4 이벤트 통합 + NLG (GPU 미사용)")
         results = []
         for frame_idx, (tracks, statuses) in enumerate(zip(tracks_by_frame, statuses_by_frame)):
-            results.append(self._combine_frame(frame_idx, tracks, statuses, track_missing_items))
+            ppe_events_this_frame = ppe_decision_events_by_frame.get(frame_idx, [])
+            results.append(self._combine_frame(
+                frame_idx, tracks, statuses, track_missing_items, ppe_events_this_frame))
         return results
 
     def _combine_frame(
         self, frame_idx: int, tracks: list[Track], statuses: list[PersonPPEStatus],
-        track_missing_items: dict[int, list[str]],
+        track_missing_items: dict[int, list[str]], ppe_events_this_frame: list[tuple[int, str]],
     ) -> FrameResult:
         candidate_events: list[SafetyEvent] = []
-        fall_events: list[SafetyEvent] = []
 
         for trigger in self.fall_trigger.update(frame_idx, tracks):
-            event = SafetyEvent(
+            candidate_events.append(SafetyEvent(
                 track_id=trigger.track_id,
                 event_type=EventType.FALL_SUSPECTED,
                 frame_idx=frame_idx,
                 detail=trigger.reason.value,
                 confidence=trigger.confidence_hint,
-            )
-            candidate_events.append(event)
-            fall_events.append(event)
+            ))
+
+        for track_id, item in ppe_events_this_frame:
+            candidate_events.append(SafetyEvent(
+                track_id=track_id,
+                event_type=EventType.PPE_MISSING,
+                frame_idx=frame_idx,
+                detail=item,
+                confidence=0.8,
+            ))
 
         alerts = self.aggregator.submit(candidate_events)
         alarm_texts = [generate_alarm_text(e) for e in alerts]

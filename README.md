@@ -78,6 +78,9 @@ export GEMINI_API_KEY=발급받은_키
 python webapp/app.py
 # http://localhost:5050 접속
 ```
+먼저 `python scripts/demo_full_pipeline.py --source S2-N6001_trip --max-frames 200`처럼
+데모 결과를 생성하면 웹앱이 그 영상을 자동으로 사용한다. 데모 결과가 없으면 웹앱의
+드래그앤드랍 영역에 mp4와 `event_timeline_*.json`을 함께 넣어도 된다.
 
 ## 데이터셋
 

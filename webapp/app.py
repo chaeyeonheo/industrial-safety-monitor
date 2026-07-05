@@ -40,6 +40,13 @@ def discover_sources() -> list[str]:
     )
 
 
+def load_timeline_from_payload(payload: dict) -> list[dict] | None:
+    timeline = payload.get("timeline")
+    if isinstance(timeline, list):
+        return timeline
+    return None
+
+
 @app.route("/")
 def index():
     return render_template("index.html", sources=discover_sources())
@@ -58,14 +65,22 @@ def ask():
     payload = request.get_json(force=True)
     source = payload.get("source")
     question = (payload.get("question") or "").strip()
-    if not source or not question:
-        return jsonify({"error": "source와 question이 필요합니다"}), 400
+    if not question:
+        return jsonify({"error": "question이 필요합니다"}), 400
 
-    timeline_path = OUTPUT_DIR / f"event_timeline_{source}.json"
-    if not timeline_path.exists():
-        return jsonify({"error": f"이벤트 타임라인이 없습니다: {timeline_path.name}"}), 404
+    timeline = load_timeline_from_payload(payload)
+    if timeline is None:
+        if not source:
+            return jsonify({"error": "source 또는 timeline이 필요합니다"}), 400
 
-    timeline = json.loads(timeline_path.read_text(encoding="utf-8"))
+        timeline_path = OUTPUT_DIR / f"event_timeline_{source}.json"
+        if not timeline_path.exists():
+            return jsonify({"error": (
+                f"이벤트 타임라인이 없습니다: {timeline_path.name}. "
+                "데모 결과를 먼저 생성하거나 mp4와 json을 함께 드래그앤드랍하세요."
+            )}), 404
+        timeline = json.loads(timeline_path.read_text(encoding="utf-8"))
+
     try:
         answer = get_vqa().ask(timeline, question)
     except Exception as e:  # Gemini API 키 미설정 등

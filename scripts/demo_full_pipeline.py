@@ -28,11 +28,15 @@ KEYPOINT_SOURCE_DIR = REPO_ROOT / "data/raw/ppe_construction_aihub163/keypoints/
 FIGURES_DIR = REPO_ROOT / "results/figures"
 OUTPUT_DIR = REPO_ROOT / "outputs"
 
-# 여러 데모 샘플(사용자 요청) — 넘어짐 2개(다른 영상 그룹) + 떨어짐 1개
+# 여러 데모 샘플(사용자 요청, 다양한 샘플로 확장) — 부딪힘/물체에맞음은 아직
+# 다운로드 안 해서 제외, 대신 이미 받아둔 떨어짐/넘어짐 안에서 서로 다른 영상
+# 그룹 5개 사용.
 DEMO_SOURCES = {
     "S2-N6001_trip": KEYPOINT_SOURCE_DIR / "_frames_S2N6001",   # 넘어짐
     "S2-N6301_trip": KEYPOINT_SOURCE_DIR / "_frames_S2N6301",   # 넘어짐(다른 그룹)
+    "S2-N6401_trip": KEYPOINT_SOURCE_DIR / "_frames_S2N6401",   # 넘어짐(다른 그룹)
     "S2-N4601_fall": KEYPOINT_SOURCE_DIR / "_frames_S2N4601",   # 떨어짐
+    "S2-N4701_fall": KEYPOINT_SOURCE_DIR / "_frames_S2N4701",   # 떨어짐(다른 그룹)
 }
 
 FALL_BANNER_PERSIST_FRAMES = 15  # 낙상 배너를 최소 이만큼의 프레임 동안 유지(너무 빨리 사라지지 않게)
