@@ -18,12 +18,13 @@
                                     │
               ┌─────────────────────┼─────────────────────┐
               ▼                                            ▼
-   [낙상 감지 브랜치]                              [PPE 미착용 판정 브랜치]
-   Stage A: bbox 종횡비/수직속도/                   YOLO11n(4클래스: 헬멧/조끼/
-   탐지유실 휴리스틱(항상 라이브 연결)                벨트/안전화) + 간접연결(IoU
-   Stage B: HD-GCN 5-way 분류기                     대신 중심점+신체부위 매칭)
-   (오프라인 keypoint 데이터로만 평가,                track 첫 관찰 시점에만 판정,
-   실시간 pose 추출기 없어 라이브 미연결)             이후 고정(인과적, 안 깜빡임)
+   [낙상 감지 브랜치 — fall_mode 3종 중 택1]         [PPE 미착용 판정 브랜치]
+   ① bbox_heuristic: 추적 bbox 종횡비/수직속도/       YOLO11n(4클래스: 헬멧/조끼/
+     탐지유실 휴리스틱(최경량, 기본값)                 벨트/안전화) + 간접연결(IoU
+   ② keypoint_heuristic: YOLO11n-pose 실시간 추출     대신 중심점+신체부위 매칭)
+     + 같은 휴리스틱(①보다 민감, 실측 +55%)           track 첫 관찰 시점에만 판정,
+   ③ hdgcn: 같은 keypoint를 HD-GCN 5-way 분류         이후 고정(인과적, 안 깜빡임)
+     (오프라인 81.8%였지만 실시간 0건 — 분포 차이)
               │                                            │
               └─────────────────────┬─────────────────────┘
                                     ▼
@@ -48,11 +49,14 @@
 | Phase 2 keypoint 매핑 | 16개 점 관절 이름 실측 추론 | 공식 문서 없어 이미지에 점 찍어 시각 확인(best-effort) | `docs/keypoint_mapping.md` |
 | Phase 2 Stage A | 종횡비 급변/수직속도/탐지유실 휴리스틱 | 학습 없이 실시간 동작하는 1차 필터 | `docs/fall_detection_design.md` |
 | Phase 2 Stage B | HD-GCN(ICCV 2023) 5-way 분류 | Stage A는 이진 신호뿐이라 사고 유형 구분 불가 → 학습 분류기로 보완 | `docs/ablation_studies.md` Ablation 3 |
+| Phase 2 실시간 pose | YOLO11n-pose(COCO-17) + AIHub16 근사 리매핑 | HD-GCN/keypoint 휴리스틱을 라이브 파이프라인에 연결하려면 정답 keypoint 대신 실시간 추출 필요 | `src/fall_detection/pose_extractor.py` |
+| Phase 2 실시간 3-way 비교 | bbox_heuristic / keypoint_heuristic / hdgcn 중 택1(`fall_mode`) | 셋 다 실측 비교해야 어떤 게 실배포에 맞는지 판단 가능 — HD-GCN은 분포 차이로 실시간 0건 검출 확인 | `docs/ablation_studies.md` Ablation 3-보충 |
 | Phase 3 PPE 클래스 매핑 | bbox class 코드 실측 추론(헬멧/조끼/벨트/안전화) | 공식 문서 없어 이미지에 bbox 그려 시각 확인 | `docs/ppe_class_mapping.md` |
-| Phase 3 PPE 탐지 | YOLO11n 4클래스 파인튜닝(mAP50 0.78→더 높게 재학습 중) | 사람 클래스는 Phase 1이 이미 담당, 보호구만 추가 학습 | `results/RESULTS.md` Phase 3 |
+| Phase 3 PPE 탐지 | YOLO11n 4클래스 파인튜닝(mAP50 0.781→**0.920**, 2732라벨/40ep로 재학습) | 사람 클래스는 Phase 1이 이미 담당, 보호구만 추가 학습. 데이터를 2000→8000프레임 샘플로 늘려 재학습 | `results/RESULTS.md` Phase 3 |
 | Phase 3 미착용 판정 | 간접 연결(중심점+신체부위 매칭) | 전체 bbox IoU는 부분 박스(헬멧 등)엔 항상 0에 가까워 무의미 | `src/ppe_detection/indirect_association.py` |
-| 통합 파이프라인 | track별 첫 관찰 구간만 보고 PPE 확정, 이후 고정 | 프레임마다 재판정하면 각도/블러로 깜빡임 발생(사용자 실측 발견) | `src/pipeline.py` |
-| NLG/VQA | 템플릿(실시간 알람) + Gemini(사후 질의응답) | 실시간 알람은 LLM 호출 없이 즉시, 사후 질의는 자연어로 유연하게 | `src/nlg/` |
+| 통합 파이프라인 | track이 처음 관찰된 첫 몇 프레임(기본 6)만 보고 PPE 확정, 이후 재판정 없이 고정 | 매 프레임 새로 판정하면 각도/블러로 미착용 여부가 계속 바뀌는 문제 발견(사용자 실측) → 인과적(미래를 안 봄) 방식으로 1회만 확정, 실시간 스트리밍에도 그대로 적용 가능 | `src/pipeline.py` |
+| 파이프라인 실행 방식 | 추적 모델 전체 패스 → GPU 내림 → PPE 모델 전체 패스 → GPU 내림 → 이벤트 통합(GPU 없음) | 두 모델을 프레임마다 번갈아 호출하면 지속 부하가 커짐(반복되는 시스템 크래시 대응) — 완전 순차 실행으로 전환 | `src/pipeline.py` `run_offline()` |
+| NLG/VQA | 템플릿(실시간 알람) + Gemini(사후 질의응답, 이벤트 타임라인 JSON을 근거로 제공) | 실시간 알람은 LLM 호출 없이 즉시, 사후 질의는 자연어로 유연하게. Gemini는 타임라인에 없는 내용은 지어내지 않도록 시스템 프롬프트로 제약 | `src/nlg/vqa_gemini.py`, `webapp/` |
 
 ## 3. Ablation 3종 (핵심 실증) — 상세: `docs/ablation_studies.md`
 
@@ -71,19 +75,30 @@
 |---|---|---|
 | Phase1 탐지 실패율(낙상 영상) | 50.6% (224/443프레임) | RESULTS.md |
 | PPE YOLO mAP50 (1차, 662라벨/20ep) | 0.781 | RESULTS.md |
-| PPE YOLO mAP50 (재학습, 2732라벨/40ep) | 재학습 진행 중 — 완료 후 갱신 | RESULTS.md |
-| HD-GCN 5-way 정확도 | 81.8% | ablation_studies.md |
+| PPE YOLO mAP50 (재학습, 2732라벨/40ep) | **0.920** | RESULTS.md |
+| HD-GCN 5-way 정확도 (오프라인, 정답 keypoint) | 81.8% | ablation_studies.md |
+| HD-GCN 실시간 낙상 검출 (5개 영상×200프레임, YOLO11n-pose 입력) | **0건**(오프라인 성능 미이전, 분포 차이 확인됨) | ablation_studies.md Ablation 3-보충 |
+| 낙상 검출 건수: bbox 휴리스틱 vs keypoint 휴리스틱 (5개 영상 합계) | 31건 → 48건 (+55%) | ablation_studies.md Ablation 3-보충 |
 | 낙상 라벨 윈도우 수 (v1 → gap 튜닝) | 30개 → 6,687개 | data_preprocessing.md |
 
 ## 5. 알려진 한계
 
 - keypoint 관절 매핑, PPE 클래스 매핑 모두 공식 문서 없이 실측 추론(best-effort,
   확정 아님).
-- Stage B(HD-GCN)는 실시간 pose 추출기가 없어 라이브 파이프라인에 미연결 —
-  오프라인 keypoint 데이터로만 평가.
+- HD-GCN은 실시간 pose 추출기(YOLO11n-pose)와 연결은 됐지만, 학습 데이터(AIHub
+  정답 keypoint)와 실시간 입력(YOLO11n-pose + COCO17→AIHub16 근사 리매핑) 사이
+  분포 차이가 커서 오프라인 81.8%가 실시간에는 전혀 재현되지 않음(5개 영상
+  1,000프레임에서 0건 검출, ablation_studies.md Ablation 3-보충 참고). 현재
+  실시간 배포에는 keypoint_heuristic이 더 나은 선택.
+- keypoint_heuristic이 bbox_heuristic보다 낙상을 더 많이 잡아내지만(31→48건),
+  프레임 단위 정답 라벨이 없어 이게 recall 향상인지 오탐 증가인지는 구분 못함.
 - PPE 모델이 학습 도메인(물류센터)과 다른 장면(낙상 시연 영상)에서는 정확도가
   떨어짐(도메인 일반화 한계, 실측으로 확인).
 - 사람 탐지기가 특이한 물체(자재 더미 등)를 사람으로 오탐하는 사례 발견.
+- ByteTrack이 사람이 일시적으로 가려지거나 프레임 샘플링 간격이 벌어지면(AIHub
+  원본 프레임 번호 간격이 불규칙, 중앙값 7·최대 53) track_id를 새로 부여하는
+  경우가 있음 — 짧은 시간 같은 사람이 다른 ID로 갈리는 현상. ByteTrack 자체의
+  재식별(Re-ID) 한계이며, 프레임 보간 없이는 완전히 해결하기 어려움.
 - 컴퓨터 하드웨어 안정성 이슈(반복 크래시)로 전체 443프레임이 아닌 200프레임
   단위로 데모를 제한함.
 

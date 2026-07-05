@@ -24,6 +24,8 @@ DEMO_FPS = 5.0
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PPE_WEIGHTS = REPO_ROOT / "outputs/ppe_yolo_runs/train/weights/best.pt"
+POSE_WEIGHTS = REPO_ROOT / "weights/yolo11n-pose.pt"
+HDGCN_WEIGHTS = REPO_ROOT / "outputs/hdgcn_runs/hdgcn_fall_v2.pt"
 KEYPOINT_SOURCE_DIR = REPO_ROOT / "data/raw/ppe_construction_aihub163/keypoints/val/source"
 FIGURES_DIR = REPO_ROOT / "results/figures"
 OUTPUT_DIR = REPO_ROOT / "outputs"
@@ -117,7 +119,11 @@ def draw_frame(img, result, active_fall_banners: dict[int, int]) -> None:
                     FONT, 1.4, (255, 255, 255), 4, cv2.LINE_AA)
 
 
-def run_one(name: str, frame_dir: Path, max_frames: int) -> None:
+def run_one(name: str, frame_dir: Path, max_frames: int, fall_mode: str = "bbox_heuristic") -> None:
+    # bbox_heuristic은 기존 파일명을 그대로 쓰고(하위 호환), 나머지 2개 모드는
+    # 비교용으로 파일명에 모드를 붙여 따로 저장한다(3개 버전이 서로 안 덮어씀).
+    out_name = name if fall_mode == "bbox_heuristic" else f"{name}_{fall_mode}"
+
     frame_paths = sorted(frame_dir.glob("*.jpg"))
     if max_frames:
         frame_paths = frame_paths[:max_frames]
@@ -127,21 +133,22 @@ def run_one(name: str, frame_dir: Path, max_frames: int) -> None:
     first_img = cv2.imread(str(frame_paths[0]))
     h, w = first_img.shape[:2]
 
-    print(f"\n=== [{name}] {len(frame_paths)}프레임 ===")
+    print(f"\n=== [{out_name}] {len(frame_paths)}프레임 (fall_mode={fall_mode}) ===")
     pipeline = SafetyMonitorPipeline(
         ppe_weights=str(PPE_WEIGHTS), fps=DEMO_FPS, frame_size=(w, h), cooldown_seconds=10.0,
-        ppe_decision_window_frames=6,
+        ppe_decision_window_frames=6, fall_mode=fall_mode,
+        pose_weights=str(POSE_WEIGHTS), hdgcn_weights=str(HDGCN_WEIGHTS),
     )
 
-    # 추적 모델 -> PPE 모델 순으로 완전히 분리 실행(둘을 동시에 GPU에 띄우지
-    # 않음). 결과가 다 나온 뒤에는 GPU 없이 오버레이만 그린다.
+    # 추적 모델 -> PPE 모델 -> (필요시) pose 모델 순으로 완전히 분리 실행(모델을
+    # 동시에 GPU에 띄우지 않음). 결과가 다 나온 뒤에는 GPU 없이 오버레이만 그린다.
     results = pipeline.run_offline([str(p) for p in frame_paths])
 
     # VQA 웹앱이 쓸 이벤트 타임라인(초 단위 타임스탬프 포함) JSON 저장
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    save_event_timeline(results, DEMO_FPS, OUTPUT_DIR / f"event_timeline_{name}.json")
+    save_event_timeline(results, DEMO_FPS, OUTPUT_DIR / f"event_timeline_{out_name}.json")
 
-    output_video = OUTPUT_DIR / f"full_pipeline_demo_{name}.mp4"
+    output_video = OUTPUT_DIR / f"full_pipeline_demo_{out_name}.mp4"
     writer = cv2.VideoWriter(str(output_video), cv2.VideoWriter_fourcc(*"mp4v"), 5, (w, h))
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -159,25 +166,32 @@ def run_one(name: str, frame_dir: Path, max_frames: int) -> None:
         writer.write(img)
 
         if result.alarm_texts and not saved_example:
-            cv2.imwrite(str(FIGURES_DIR / f"full_pipeline_demo_{name}_frame.png"), img)
+            cv2.imwrite(str(FIGURES_DIR / f"full_pipeline_demo_{out_name}_frame.png"), img)
             saved_example = True
         if result.fall_events and not saved_fall_example:
-            cv2.imwrite(str(FIGURES_DIR / f"full_pipeline_demo_{name}_fall_frame.png"), img)
+            cv2.imwrite(str(FIGURES_DIR / f"full_pipeline_demo_{out_name}_fall_frame.png"), img)
             saved_fall_example = True
 
     writer.release()
-    print(f"[full-pipeline] [{name}] 총 {len(frame_paths)}프레임 처리, 알람 {total_alerts}건 발생")
-    print(f"[full-pipeline] [{name}] 영상 저장: {output_video}")
+    print(f"[full-pipeline] [{out_name}] 총 {len(frame_paths)}프레임 처리, 알람 {total_alerts}건 발생")
+    print(f"[full-pipeline] [{out_name}] 영상 저장: {output_video}")
 
 
 def main() -> None:
     import argparse
+    from src.pipeline import FALL_MODES  # noqa: E402 (지연 import, argparse choices용)
     parser = argparse.ArgumentParser()
     parser.add_argument("--max-frames", type=int, default=200,
                          help="443프레임 전체는 반복 크래시 이력이 있어 기본 200으로 제한. "
                               "0을 주면 전체 사용")
     parser.add_argument("--source", type=str, default=None, choices=list(DEMO_SOURCES),
                          help="생략하면 DEMO_SOURCES 전체(여러 샘플)를 순차 실행")
+    parser.add_argument("--fall-mode", type=str, default="bbox_heuristic", choices=list(FALL_MODES),
+                         help="낙상 감지 방식: bbox_heuristic(기본, 추적 bbox) / "
+                              "keypoint_heuristic(실시간 pose 추출 + 같은 휴리스틱) / "
+                              "hdgcn(실시간 pose 추출 + 학습된 HD-GCN 5-way 분류)")
+    parser.add_argument("--compare-all", action="store_true",
+                         help="지정한 source(들)에 대해 3가지 fall_mode를 모두 순차 실행하여 비교 산출물 생성")
     args = parser.parse_args()
 
     if not PPE_WEIGHTS.exists():
@@ -185,8 +199,10 @@ def main() -> None:
         return
 
     sources = {args.source: DEMO_SOURCES[args.source]} if args.source else DEMO_SOURCES
+    fall_modes = list(FALL_MODES) if args.compare_all else [args.fall_mode]
     for name, frame_dir in sources.items():
-        run_one(name, frame_dir, args.max_frames)
+        for fall_mode in fall_modes:
+            run_one(name, frame_dir, args.max_frames, fall_mode=fall_mode)
 
 
 if __name__ == "__main__":

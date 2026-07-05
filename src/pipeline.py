@@ -1,26 +1,29 @@
 """전체 통합 파이프라인 진입점.
 
-[사람 탐지+추적(공유 백본)] → ┬→ [낙상 Stage A 휴리스틱]     ┐
-                              └→ [PPE 미착용 판정(간접 연결)] ┴→ [이벤트 통합] → [NLG 알람]
+[사람 탐지+추적(공유 백본)] → ┬→ [낙상 감지 브랜치 — 아래 3종 모드 중 택1]  ┐
+                              └→ [PPE 미착용 판정(간접 연결)]              ┴→ [이벤트 통합] → [NLG 알람]
 
-`run_offline()`은 미리 정해진 프레임 목록(녹화된 영상)을 **3단계로 완전히
-분리**해서 처리한다: (1) 추적 모델만 GPU에 올려 전체 프레임의 track을 뽑고
-모델을 내림, (2) PPE 모델만 GPU에 올려 전체 프레임의 보호구 탐지를 뽑고
-모델을 내림, (3) 나머지(이벤트 통합/NLG)는 GPU 없이 순수 계산. 두 모델을
-동시에 GPU에 띄워 프레임마다 번갈아 호출하는 대신 완전히 순차적으로 실행해
-지속 부하를 낮춘다(반복되는 시스템 크래시에 대한 사용자 요청 반영).
+낙상 감지는 `fall_mode`로 3가지 중 하나를 고른다:
+  - "bbox_heuristic" (기본): 추적 bbox 종횡비/수직속도/탐지유실 휴리스틱.
+    pose 불필요, 가장 가볍고 실시간성 좋음.
+  - "keypoint_heuristic": YOLO11n-pose로 실시간 keypoint를 뽑아 그 bounding
+    box로 **같은 휴리스틱 로직**(bbox_heuristic과 동일한 FallHeuristicTrigger)을
+    돌린다. "keypoint 기반이면 탐지 bbox보다 정확하지 않을까"를 실측 비교하기
+    위한 버전.
+  - "hdgcn": YOLO11n-pose로 뽑은 keypoint를 30프레임 버퍼로 쌓아 학습된
+    HD-GCN(5-way)으로 분류. 단, 학습 데이터는 AIHub 정답 keypoint였고 여기선
+    YOLO11n-pose(COCO-17) -> AIHub16 근사 리매핑을 거친 keypoint라 오프라인
+    평가(81.8%)와 정확도가 다를 수 있음(실측 비교 대상).
 
-**PPE 판정은 이 track이 처음 관찰된 시점(첫 몇 프레임)에만 내리고, 그 이후로는
-다시 판정하지 않고 그대로 유지한다** — 미래 프레임을 미리 들여다보는 게 아니라,
-"처음 봤을 때 판단한 걸 계속 쓴다"는 뜻(실시간 스트리밍으로 들어와도 그대로
-동작하는 인과적 방식, 사용자 요청). 매 프레임 새로 판정하면 각도/블러 때문에
-프레임마다 착용/미착용이 깜빡이는데, 같은 사람의 보호구가 영상 중간에
-사라졌다 나타났다 할 리는 없으므로 한 번 정해지면 그 track이 사라질 때까지
-고정한다.
+`run_offline()`은 미리 정해진 프레임 목록(녹화된 영상)을 **완전히 분리된
+순차 패스**로 처리한다: 추적 모델 전체 패스 -> GPU 내림 -> PPE 모델 전체
+패스 -> GPU 내림 -> (필요시) pose 추출 전체 패스 -> GPU 내림 -> 나머지는
+GPU 없이 순수 계산. 여러 모델을 프레임마다 번갈아 호출하면 지속 부하가
+커진다는 문제(반복되는 시스템 크래시)에 대응해 이렇게 설계함.
 
-Stage B(HD-GCN)는 실시간 pose 추출기가 아직 없어 이 라이브 파이프라인에는
-연결하지 못했고, 라벨링된 오프라인 데이터로만 평가한다
-(scripts/evaluate_fall_ablation.py, docs/ablation_studies.md 참고).
+PPE 판정은 track이 처음 관찰된 시점(첫 몇 프레임)에만 내리고 그 이후로는
+다시 판정하지 않는다(인과적 방식, 사용자 요청) — 자세한 이유는
+docs/FINAL_SUMMARY.md 참고.
 """
 
 from __future__ import annotations
@@ -29,16 +32,21 @@ import gc
 from collections import defaultdict
 from dataclasses import dataclass, field
 
+import numpy as np
 import torch
 from ultralytics import YOLO
 
 from src.detection_tracking.tracker import PersonTracker, Track
 from src.event_aggregator import EventAggregator, EventType, SafetyEvent
 from src.fall_detection.heuristic_trigger import FallHeuristicTrigger
+from src.fall_detection.hdgcn_live import HDGCNLiveClassifier
+from src.fall_detection.pose_extractor import PoseExtractor
 from src.nlg.template_generator import generate_alarm_text
 from src.ppe_detection.indirect_association import (
     REQUIRED_ITEMS, PPEDetection, PersonPPEStatus, check_ppe_compliance,
 )
+
+FALL_MODES = ("bbox_heuristic", "keypoint_heuristic", "hdgcn")
 
 
 @dataclass
@@ -53,6 +61,19 @@ class FrameResult:
     alarm_texts: list[str] = field(default_factory=list)
 
 
+def _bbox_iou(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> float:
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
+    inter = iw * ih
+    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+
 class SafetyMonitorPipeline:
     def __init__(
         self,
@@ -65,20 +86,30 @@ class SafetyMonitorPipeline:
         fall_trigger_kwargs: dict | None = None,
         ppe_decision_window_frames: int = 3,
         person_conf_threshold: float = 0.35,
+        fall_mode: str = "bbox_heuristic",
+        pose_weights: str = "yolo11n-pose.pt",
+        hdgcn_weights: str | None = None,
+        hdgcn_confidence_threshold: float = 0.5,
     ) -> None:
+        if fall_mode not in FALL_MODES:
+            raise ValueError(f"fall_mode는 {FALL_MODES} 중 하나여야 함: {fall_mode}")
+        self.fall_mode = fall_mode
         self.ppe_weights = ppe_weights
+        self.pose_weights = pose_weights
+        self.hdgcn_weights = hdgcn_weights
+        self.hdgcn_confidence_threshold = hdgcn_confidence_threshold
+        self.frame_size = frame_size
         self.device = "0" if torch.cuda.is_available() else "cpu"
-        print(f"[pipeline] device={self.device} "
+        self.torch_device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        print(f"[pipeline] device={self.device} fall_mode={fall_mode} "
               f"({torch.cuda.get_device_name(0) if self.device != 'cpu' else 'CPU'})")
         self.ppe_conf = ppe_conf
         self.person_conf_threshold = person_conf_threshold
         self.ppe_infer_every_n_frames = ppe_infer_every_n_frames
-        # 이 track이 처음 나타난 뒤 이만큼의 프레임만 보고 착용여부를 확정한다
-        # (1프레임만 보면 우연한 오탐/미탐에 취약해서 살짝 여유를 둠). 그 이후
-        # 프레임은 이 확정값을 그대로 재사용 — 다시 판정하지 않음.
+        # 이 track이 처음 나타난 뒤 이만큼의 프레임만 보고 착용여부를 확정한다.
         self.ppe_decision_window_frames = ppe_decision_window_frames
-        self.fall_trigger = FallHeuristicTrigger(
-            fps=fps, frame_size=frame_size, **(fall_trigger_kwargs or {}))
+        self.fall_trigger_kwargs = fall_trigger_kwargs or {}
+        self.fps = fps
         self.aggregator = EventAggregator(cooldown_frames=max(1, int(cooldown_seconds * fps)))
 
     def _free_gpu(self) -> None:
@@ -87,15 +118,13 @@ class SafetyMonitorPipeline:
             torch.cuda.empty_cache()
 
     def run_offline(self, frame_paths: list[str]) -> list[FrameResult]:
-        """녹화된 프레임 목록을 대상으로 추적 모델 → PPE 모델 순으로 완전히
-        분리해 실행한 뒤, GPU 없이 이벤트를 통합한다."""
-        print(f"[pipeline] 1/4 사람 탐지+추적 전용 패스 ({len(frame_paths)}프레임)")
+        print(f"[pipeline] 1/5 사람 탐지+추적 전용 패스 ({len(frame_paths)}프레임)")
         tracker = PersonTracker(conf_threshold=self.person_conf_threshold, device=self.device)
         tracks_by_frame: list[list[Track]] = list(tracker.track_stream(frame_paths))
         del tracker
         self._free_gpu()
 
-        print("[pipeline] 2/4 PPE 탐지 전용 패스")
+        print("[pipeline] 2/5 PPE 탐지 전용 패스")
         ppe_model = YOLO(self.ppe_weights)
         ppe_detections_by_frame: list[list[PPEDetection]] = []
         last_detections: list[PPEDetection] = []
@@ -115,15 +144,33 @@ class SafetyMonitorPipeline:
         del ppe_model
         self._free_gpu()
 
-        print("[pipeline] 3/4 track별 첫 관찰 구간만으로 PPE 판정(이후 고정)")
+        # 3/5: (keypoint_heuristic/hdgcn 모드일 때만) pose 추출 전용 패스 + track_id 매칭
+        keypoints_by_frame: list[dict[int, np.ndarray]] = [dict() for _ in frame_paths]
+        if self.fall_mode in ("keypoint_heuristic", "hdgcn"):
+            print("[pipeline] 3/5 pose 추출 전용 패스 (YOLO11n-pose)")
+            pose_extractor = PoseExtractor(
+                weights=self.pose_weights, conf_threshold=0.3, device=self.device)
+            for frame_idx, (frame_path, tracks) in enumerate(zip(frame_paths, tracks_by_frame)):
+                pose_detections = pose_extractor.extract(frame_path)
+                for track in tracks:
+                    best_iou, best_kp = 0.3, None  # 최소 IoU 0.3 이상만 매칭
+                    for pose_bbox, kp in pose_detections:
+                        iou = _bbox_iou(track.bbox, pose_bbox)
+                        if iou > best_iou:
+                            best_iou, best_kp = iou, kp
+                    if best_kp is not None:
+                        keypoints_by_frame[frame_idx][track.track_id] = best_kp
+            del pose_extractor
+            self._free_gpu()
+        else:
+            print("[pipeline] 3/5 건너뜀 (bbox_heuristic은 pose 불필요)")
+
+        print("[pipeline] 4/5 track별 첫 관찰 구간만으로 PPE 판정(이후 고정)")
         statuses_by_frame: list[list[PersonPPEStatus]] = []
         detection_count: dict[tuple[int, str], int] = defaultdict(int)
         frames_seen: dict[int, int] = defaultdict(int)
         last_seen_frame: dict[int, int] = {}
         track_missing_items: dict[int, list[str]] = {}
-        # PPE 판정이 "확정되는 그 프레임"에 이벤트를 기록해야 event_timeline(VQA
-        # 근거자료)에도 남는다 — 예전엔 화면 표시만 하고 이벤트로는 안 남기는
-        # 버그가 있었음.
         ppe_decision_events_by_frame: dict[int, list[tuple[int, str]]] = defaultdict(list)
 
         for frame_idx, (tracks, ppe_detections) in enumerate(zip(tracks_by_frame, ppe_detections_by_frame)):
@@ -133,7 +180,7 @@ class SafetyMonitorPipeline:
             for status in statuses:
                 track_id = status.track_id
                 if track_id in track_missing_items:
-                    continue  # 이미 확정됨 — 다시 안 봄(과거 프레임 재판정 없음)
+                    continue
                 last_seen_frame[track_id] = frame_idx
                 frames_seen[track_id] += 1
                 for item in status.detected_items:
@@ -147,9 +194,6 @@ class SafetyMonitorPipeline:
                     for item in missing:
                         ppe_decision_events_by_frame[frame_idx].append((track_id, item))
 
-        # 관찰 프레임이 확정 창보다 짧게 끝난(중간에 사라진) track은 그 track이
-        # 실제로 마지막 보였던 프레임 기준으로 확정한다(영상 맨 마지막 프레임에
-        # 몰아넣지 않음 — 그러면 실제 발생 시점과 안 맞는 타임라인이 된다).
         for track_id, count in frames_seen.items():
             if track_id not in track_missing_items:
                 missing = [
@@ -160,28 +204,94 @@ class SafetyMonitorPipeline:
                 for item in missing:
                     ppe_decision_events_by_frame[last_seen_frame[track_id]].append((track_id, item))
 
-        print("[pipeline] 4/4 이벤트 통합 + NLG (GPU 미사용)")
+        print(f"[pipeline] 5/5 낙상 감지({self.fall_mode}) + 이벤트 통합 + NLG (GPU 미사용, hdgcn 모드 제외)")
+        fall_events_by_frame = self._run_fall_detection(tracks_by_frame, keypoints_by_frame)
+
         results = []
         for frame_idx, (tracks, statuses) in enumerate(zip(tracks_by_frame, statuses_by_frame)):
             ppe_events_this_frame = ppe_decision_events_by_frame.get(frame_idx, [])
+            fall_events_this_frame = fall_events_by_frame.get(frame_idx, [])
             results.append(self._combine_frame(
-                frame_idx, tracks, statuses, track_missing_items, ppe_events_this_frame))
+                frame_idx, tracks, statuses, track_missing_items,
+                ppe_events_this_frame, fall_events_this_frame))
         return results
+
+    def _run_fall_detection(
+        self, tracks_by_frame: list[list[Track]], keypoints_by_frame: list[dict[int, np.ndarray]],
+    ) -> dict[int, list[SafetyEvent]]:
+        events_by_frame: dict[int, list[SafetyEvent]] = defaultdict(list)
+
+        if self.fall_mode == "bbox_heuristic":
+            trigger = FallHeuristicTrigger(
+                fps=self.fps, frame_size=self.frame_size, **self.fall_trigger_kwargs)
+            for frame_idx, tracks in enumerate(tracks_by_frame):
+                for t in trigger.update(frame_idx, tracks):
+                    events_by_frame[frame_idx].append(SafetyEvent(
+                        track_id=t.track_id, event_type=EventType.FALL_SUSPECTED,
+                        frame_idx=frame_idx, detail=t.reason.value, confidence=t.confidence_hint,
+                    ))
+            return events_by_frame
+
+        if self.fall_mode == "keypoint_heuristic":
+            # 같은 FallHeuristicTrigger를, 추적 bbox 대신 keypoint bounding box로 돌린다.
+            trigger = FallHeuristicTrigger(
+                fps=self.fps, frame_size=self.frame_size, **self.fall_trigger_kwargs)
+            for frame_idx, tracks in enumerate(tracks_by_frame):
+                kp_map = keypoints_by_frame[frame_idx]
+                pseudo_tracks = []
+                for t in tracks:
+                    kp = kp_map.get(t.track_id)
+                    if kp is None:
+                        continue
+                    valid = kp[kp[:, 2] > 0]
+                    if len(valid) == 0:
+                        continue
+                    bbox = (float(valid[:, 0].min()), float(valid[:, 1].min()),
+                            float(valid[:, 0].max()), float(valid[:, 1].max()))
+                    pseudo_tracks.append(Track(frame_idx=frame_idx, track_id=t.track_id,
+                                                bbox=bbox, confidence=t.confidence))
+                for trig in trigger.update(frame_idx, pseudo_tracks):
+                    events_by_frame[frame_idx].append(SafetyEvent(
+                        track_id=trig.track_id, event_type=EventType.FALL_SUSPECTED,
+                        frame_idx=frame_idx, detail=trig.reason.value, confidence=trig.confidence_hint,
+                    ))
+            return events_by_frame
+
+        # hdgcn 모드: GPU 필요 -> 여기서 로드하고 다 쓰면 내림
+        print("[pipeline] HD-GCN 모델 로드")
+        if not self.hdgcn_weights:
+            raise ValueError("fall_mode='hdgcn'이면 hdgcn_weights가 필요합니다")
+        classifier = HDGCNLiveClassifier(
+            self.hdgcn_weights, frame_size=self.frame_size, device=self.torch_device)
+        for frame_idx, tracks in enumerate(tracks_by_frame):
+            kp_map = keypoints_by_frame[frame_idx]
+            active_ids = {t.track_id for t in tracks}
+            for track_id in list(classifier.buffers.keys()):
+                if track_id not in active_ids:
+                    classifier.drop_track(track_id)
+            for t in tracks:
+                kp = kp_map.get(t.track_id)
+                if kp is None:
+                    continue
+                result = classifier.update(t.track_id, kp)
+                if result is None:
+                    continue
+                class_name, confidence = result
+                if class_name != "normal" and confidence >= self.hdgcn_confidence_threshold:
+                    events_by_frame[frame_idx].append(SafetyEvent(
+                        track_id=t.track_id, event_type=EventType.FALL_SUSPECTED,
+                        frame_idx=frame_idx, detail=class_name, confidence=confidence,
+                    ))
+        del classifier
+        self._free_gpu()
+        return events_by_frame
 
     def _combine_frame(
         self, frame_idx: int, tracks: list[Track], statuses: list[PersonPPEStatus],
         track_missing_items: dict[int, list[str]], ppe_events_this_frame: list[tuple[int, str]],
+        fall_events_this_frame: list[SafetyEvent],
     ) -> FrameResult:
-        candidate_events: list[SafetyEvent] = []
-
-        for trigger in self.fall_trigger.update(frame_idx, tracks):
-            candidate_events.append(SafetyEvent(
-                track_id=trigger.track_id,
-                event_type=EventType.FALL_SUSPECTED,
-                frame_idx=frame_idx,
-                detail=trigger.reason.value,
-                confidence=trigger.confidence_hint,
-            ))
+        candidate_events: list[SafetyEvent] = list(fall_events_this_frame)
 
         for track_id, item in ppe_events_this_frame:
             candidate_events.append(SafetyEvent(
