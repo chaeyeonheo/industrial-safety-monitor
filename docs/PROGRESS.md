@@ -70,8 +70,14 @@ Phase 3 PPE 학습 파이프라인을 먼저 검증하고, 필요하면 나머�
 - [~] AIHub 데이터 다운로드 진행 중 (백그라운드 2개 프로세스, 위 테이블 참고)
   - 하나는 아직 명령/프로세스 상태를 세션 재시작 후 알 수 없음 → 재개 시 `ls -la` 로 실제
     다운로드된 파일 존재 여부/크기를 먼저 확인해서 어디까지 받았는지 판단할 것
-- [ ] Phase 1: 탐지+추적 공유 백본 (진행 예정, AIHub 데이터 불필요 — YOLO11 pretrained + 샘플
-      영상만 있으면 됨. 다운로드와 병렬로 진행 중)
+  - 2026-07-05 20:50 기준: 키포인트 원천(넘어짐+떨어짐, ~30GB) 중 약 4.8GB 다운로드됨
+- [~] Phase 1: 탐지+추적 공유 백본 — **코드 완료** (`src/detection_tracking/tracker.py`,
+      `scripts/demo_tracking.py`), YOLO11n 가중치는 `weights/yolo11n.pt`로 이동해둠.
+      정지이미지(bus.jpg) sanity check 실행 완료(사람 4명 정탐, `results/RESULTS.md` 참고).
+      **비디오 기반 트랙 ID 일관성 검증은 미실행** — 신뢰 가능한 데모 영상 URL이 없어
+      AIHub 키포인트 원천영상(넘어짐/떨어짐) 다운로드 완료를 기다리는 중.
+- [ ] NLG 방식 3-way 비교 계획 확정: 템플릿(Jinja2) / Gemini API / Ollama 로컬 — 사용자 요청,
+      Phase 2~3 완료 후 착수 예정. API 키는 사용자가 직접 발급.
 - [ ] Phase 2~7: 미착수
 
 ## 다음 세션에서 할 일 (재개 체크리스트)
@@ -79,6 +85,8 @@ Phase 3 PPE 학습 파이프라인을 먼저 검증하고, 필요하면 나머�
 1. `data/raw/ppe_construction_aihub163/` 하위 각 폴더에 실제로 몇 GB가 받아졌는지 확인
    (`du -sh` 또는 `ls -la`)
 2. 다운로드가 끊겼다면 위 파일키 테이블로 이어받기
-3. 키포인트 라벨 전수(23,840개 × 4카테고리) path별 그룹 분석 완료 후
+3. 키포인트 원천영상(넘어짐/떨어짐)이 받아졌으면 `python scripts/demo_tracking.py --source <경로>`로
+   비디오 트랙 ID 일관성 실측 후 `results/RESULTS.md`의 "비디오 기반 트랙 ID 일관성 검증" 절 채우기
+4. 키포인트 라벨 전수(23,840개 × 4카테고리) path별 그룹 분석 완료 후
    `scripts/convert_aihub163_keypoints_to_pyskl.py` 작성
-4. Phase 1 코드(`src/detection_tracking/`) 진행 상황 확인 후 이어서 구현
+5. Phase 2(낙상 감지) 착수: heuristic/1D-CNN-LSTM/ST-GCN/RGB baseline 4종 비교
