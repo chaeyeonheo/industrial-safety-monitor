@@ -86,11 +86,13 @@ Phase 3 PPE 학습 파이프라인을 먼저 검증하고, 필요하면 나머�
 여부, Windows 이벤트 뷰어의 정확한 BSOD 코드, GPU 드라이버 최신 여부 등 하드웨어/시스템
 레벨 점검을 사용자에게 제안하는 것이 다음 단계로 필요할 수 있음.
 
-**적용된 코드 변경(`src/detection_tracking/tracker.py`, 아직 커밋 안 함)**:
+**적용된 코드 변경(`src/detection_tracking/tracker.py`, 커밋 완료)**:
 - `device` 자동감지 대신 명시적으로 `"0"`(CUDA) 강제, 실제 사용 디바이스를 로그 출력
-- `torch.backends.cudnn.benchmark = False`
-- 50프레임마다 `torch.cuda.empty_cache()` — **사용자 반론 이후 이 부분을 유지할지
-  제거할지는 아직 결론 안 남. 다음 세션에서 판단 필요.**
+- `torch.backends.cudnn.benchmark = False` (유지)
+- 50프레임마다 `torch.cuda.empty_cache()` — **사용자 반론 수용해 제거함.** 이득이
+  불확실하고 드라이버 호출만 늘릴 수 있다는 지적이 타당하다고 판단.
+- 이 상태로 `demo_tracking_vs_transition.py` 재실행 **성공**(GPU 사용 확인, 크래시 없음).
+  다만 표본이 1번뿐이라 "고쳐졌다"고 단정할 수 없음 — 계속 지켜볼 것.
 
 ## 현재 상태 (2026-07-06 새벽 기준, 컴퓨터 과부하로 세션이 여러 번 끊겨 자주 갱신 중)
 
@@ -153,11 +155,10 @@ Phase 3 PPE 학습 파이프라인을 먼저 검증하고, 필요하면 나머�
       **224건(50.6%)**, 그중 **29건**은 keypoint 기반 전환감지가 대신 잡아냄. 나머지
       195건은 낙상과 무관한 이유로 탐지 실패(원인 미조사). 결과: `results/RESULTS.md`,
       예시 이미지 `results/figures/compare_tracking_miss_transition_catches.png`.
-      **2026-07-06 수정 진행 중(미완료, 미커밋)**: 사용자 피드백 반영 —
-      (a) 아래쪽(keypoint) 오버레이에도 bbox를 그려서 위/아래를 "박스 vs 박스"로
-      직접 비교 가능하게 함, (b) 합본 영상뿐 아니라 tracking_only.mp4/transition_only.mp4
-      개별 저장도 추가. **코드는 고쳤지만 컴퓨터가 다시 꺼져서 재실행 결과 확인 전.**
-      다음 세션에서 `python scripts/demo_tracking_vs_transition.py` 재실행부터 할 것.
+      **2026-07-06 개선 완료, 커밋 완료**: 사용자 피드백 반영 — (a) 아래쪽(keypoint)
+      오버레이에도 bbox를 그려서 위/아래를 "박스 vs 박스"로 직접 비교 가능하게 함,
+      (b) 합본 영상뿐 아니라 `outputs/tracking_only.mp4`/`transition_only.mp4` 개별
+      저장도 추가. 재실행 결과 동일 수치(224/29건) 재현 확인.
 - [~] **PPE(안전모) YOLO 학습 착수 중** — 물류센터 라벨/이미지는 이미 받아둠
       (`data/raw/ppe_construction_aihub163/labels/train`, `images/train`). **라벨 포맷을
       아직 열어보지 못함**(다음 세션 최우선 작업 — bbox 좌표 형식, 클래스 목록 확인 후
@@ -235,20 +236,15 @@ import zipfile; z = zipfile.ZipFile(path); z.testzip()  # None이면 정상, 예
 
 ## 다음 세션에서 할 일 (재개 체크리스트) — 2026-07-06 새벽 기준 최신
 
-1. **git status 먼저 확인** — `src/detection_tracking/tracker.py`,
-   `scripts/demo_tracking_vs_transition.py` 수정이 아직 미커밋 상태일 수 있음.
-2. 넘어짐 원천(filekey 559794)/물류센터 val 원천(filekey 559938) 다운로드가 사용자 쪽에서
+1. 넘어짐 원천(filekey 559794)/물류센터 val 원천(filekey 559938) 다운로드가 사용자 쪽에서
    끝났는지 확인(zip 무결성 검사, 위 표 참고). 안 끝났으면 세션에서 다시 시도하지 말 것.
-3. `empty_cache()` 관련 사용자 반론(위 "컴퓨터가 반복적으로 꺼짐" 절 참고) — 유지할지
-   제거할지 판단하고, 필요하면 되돌릴 것.
-4. `python scripts/demo_tracking_vs_transition.py` 재실행해서 수정된 버전(박스 vs 박스
-   비교, 개별 영상 3개 저장) 결과 확인 후 커밋.
-5. **PPE 라벨 포맷 확인부터 시작** — `data/raw/ppe_construction_aihub163/labels/train`
-   압축 해제해서 bbox 좌표 형식/클래스 목록 확인 → `scripts/convert_aihub163_to_yolo.py`
-   작성 → `scripts/train_ppe_yolo.py`로 학습.
-6. 키포인트 라벨 전수(23,840개 × 4카테고리) path별 그룹/프레임간격 분석은 이미 완료됨
-   (`results/RESULTS.md`, `docs/data_preprocessing.md` 참고) — 재분석 불필요.
-7. HD-GCN을 실제 학습 코드에 연결(그래프 설정에 `docs/keypoint_mapping.md`의 추론
+2. **PPE 라벨 포맷 확인부터 시작(최우선, 진행 중이었음)** —
+   `data/raw/ppe_construction_aihub163/labels/train` 압축 해제해서 bbox 좌표 형식/클래스
+   목록 확인 → `scripts/convert_aihub163_to_yolo.py` 작성 → `scripts/train_ppe_yolo.py`로 학습.
+3. HD-GCN을 실제 학습 코드에 연결(그래프 설정에 `docs/keypoint_mapping.md`의 추론
    매핑 사용, v1/v2 데이터 각각으로 학습해 ablation 비교)
-8. TRACK_LOST → best-effort pose 추출 오케스트레이션 (`docs/fall_detection_design.md` 3.3절
+4. TRACK_LOST → best-effort pose 추출 오케스트레이션 (`docs/fall_detection_design.md` 3.3절
    설계는 되어 있으나 코드 미작성)
+5. GPU 안정성 관련 — cudnn.benchmark=False로 바꾼 뒤 크래시 없이 1회 성공했으나 표본이
+   적음. 계속 크래시가 나면 하드웨어/드라이버 레벨 점검(노트북 냉각, 전원 어댑터,
+   Windows 이벤트 뷰어 BSOD 코드, GPU 드라이버 버전)을 사용자에게 제안할 것.
