@@ -223,3 +223,38 @@ v1의 한계를 보완하기 위해 Stage A 휴리스틱(`aspect_ratio_delta_thr
 것이며, 아직 실시간 pose 추출기를 통합한 최종 비교는 아니다(pose 추출기는
 Stage B 구현 시 추가 예정). 전체 비교 영상은 `outputs/tracking_vs_transition.mp4`
 (로컬에만 존재, git 미포함).
+
+## Phase 3: PPE(안전보호구) YOLO 파인튜닝 (2026-07-06)
+
+**데이터**: `scripts/convert_aihub163_to_yolo.py`로 물류센터(반도체클러스터) 라벨 중
+이미지가 있는 21,037프레임에서 2,000개 샘플 추출. 662프레임에 PPE bbox 존재,
+클래스당 380~451개(helmet 395, vest 380, harness 451, safety_shoes 421).
+train/val = 1800/200 (9:1).
+
+**학습 명령**: `python scripts/train_ppe_yolo.py --epochs 20 --batch 16`
+**환경**: RTX 4070 Laptop, YOLO11n, imgsz=640. GPU 메모리 사용량 **2.25GB/8GB**로 확인.
+총 학습 시간 **약 7.1분**(20 epoch, epoch당 ~21초).
+
+**실측 결과 (val, 200장)**:
+
+| 클래스 | Precision | Recall | mAP50 | mAP50-95 |
+|---|---|---|---|---|
+| helmet | 0.698 | 0.839 | 0.804 | 0.456 |
+| vest | 0.874 | 0.633 | 0.782 | 0.446 |
+| harness | 0.710 | 0.694 | 0.729 | 0.319 |
+| safety_shoes | 0.684 | 0.804 | 0.811 | 0.503 |
+| **전체** | 0.741 | 0.742 | 0.781 | 0.431 |
+
+시각적으로도 실제 작업자 사진에서 헬멧/조끼/안전화/하네스가 합리적인 confidence로
+잡힘을 확인(`results/figures/ppe_yolo_val_predictions.png`, 학습 곡선은
+`results/figures/ppe_yolo_training_curves.png`). 2,000프레임(그중 662개만 실제
+라벨 존재)·20 epoch짜리 1차 실험치고는 양호한 수치.
+
+**한계**:
+- 클래스 매핑이 공식 문서 없이 실측 추론한 것이라(`docs/ppe_class_mapping.md`)
+  harness/safety_shoes 이름이 틀렸을 가능성이 있음(helmet/vest는 시각적으로 고신뢰).
+- 훈련 프레임이 반도체클러스터 촬영지 하나뿐이라 다른 현장(화물터미널E/E2 등)에
+  대한 일반화는 검증 안 됨.
+- "미착용" 판정(간접 연결 IoU 매칭)은 아직 미구현 — 지금은 보호구 자체를
+  탐지할 뿐, Phase 1 사람 탐지와 결합해 "이 사람은 헬멧이 없다"고 판단하는
+  로직(`src/ppe_detection/`)은 다음 단계.
