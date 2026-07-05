@@ -219,6 +219,29 @@ Phase 3 PPE 학습 파이프라인을 먼저 검증하고, 필요하면 나머�
 - **해결**: 이후 모든 스크립트 실행은 `/c/Users/cyheo/miniconda3/envs/safety/python`
   전체 경로로 명시 호출.
 
+### 문제 4: HD-GCN을 커스텀 16-keypoint 스켈레톤에 연결하며 겪은 3가지 이슈
+
+1. **`einops` 미설치** → `pip install einops`, `requirements.txt`에 추가.
+2. **`third_party/HD-GCN/graph/__init__.py`가 존재하지 않는 `ntu_rgb_d.py`,
+   `ucla_hierarchy.py`를 import함** (`__pycache__`에 컴파일 흔적은 남아있어 업스트림
+   저장소에서 실수로 빠뜨린 것으로 추정 — 우리 버그 아님). **해결**: 두 파일을
+   최소 stub(docstring만 있는 빈 파일)으로 만들어 import 에러만 회피. 이 stub은
+   커밋되지 않는 submodule 내부 로컬 변경이라, **이 저장소를 새로 클론하는 사람은
+   `third_party/HD-GCN/graph/`에 `ntu_rgb_d.py`, `ucla_hierarchy.py` 빈 파일을
+   직접 만들어야 함**(다음 세션 또는 다른 사람이 재현할 때 필요, `src/fall_detection/hdgcn_graph.py`
+   상단 주석에도 같은 안내 추가 고려).
+3. **AHA(Attention-guided Hierarchy Aggregation) 모듈이 우리 커스텀 Graph 클래스를
+   거치지 않고 `graph.tools.get_groups(dataset='NTU', CoM=CoM)`를 직접 하드코딩
+   호출**함 — NTU용 get_groups는 CoM=1/2/21만 정의되어 있어 우리 CoM=9(골반중심)를
+   넘기면 `ValueError`. **해결**: `src/fall_detection/hdgcn_graph.py`에서
+   `tools.get_groups`를 monkeypatch해서 CoM=9로 호출될 때만 우리 계층(1-indexed로
+   변환)을 반환하도록 함. AHA가 반환값을 제자리에서 mutate하므로 호출마다 새
+   복사본을 반환하는 게 중요(안 그러면 여러 레이어에서 두 번째 호출부터 깨짐).
+
+**결과**: 위 3가지를 고치고 1 epoch 스모크 테스트 성공(loss=2.31, train_acc=0.50,
+val_acc=0.60, GPU 메모리 여유 7.4GB). 이후 batch=4, epoch=10 본 학습 진행 중
+(백그라운드, `outputs/hdgcn_runs/results.csv`에서 확인).
+
 ## AIHub 다운로드 현재 상태 (2026-07-05 23:00, 반복 확인 필요)
 
 컴퓨터가 여러 번 꺼지면서 백그라운드 다운로드가 예고 없이 중단되는 일이 반복됨.
