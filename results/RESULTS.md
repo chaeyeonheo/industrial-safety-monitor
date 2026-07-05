@@ -98,3 +98,50 @@ Stage B(포즈 분류기) 실행 여부를 결정한다: (1) aspect_ratio_delta_
 현재 수치는 "코드가 정상 동작한다"는 근거이지 최종 성능 지표가 아니다. Precision/Recall/
 F1/Time-to-Detection 등은 Stage B(포즈 분류기) 구현 및 라벨 매칭 이후 `scripts/evaluate_fall.py`에서
 측정 예정.
+
+## Phase 2: pyskl 변환 스크립트 — 실측 시행착오와 최종 결과
+
+**실행 명령**: `python scripts/convert_aihub163_keypoints_to_pyskl.py`
+
+**1차 시도** (`max_gap_for_continuity=1`, 끊김 허용 없음): 실제로 돌려보니 그룹당
+최대 4000여 프레임이 **median 4프레임짜리 조각 4795개**로 파편화됨을 확인(전체
+4개 카테고리 중 falling_from_height 기준 실측). window_length=30 조건을 만족하는
+런이 카테고리별로 7~10개(영상 그룹 수와 거의 같음)뿐이라 **총 30개 윈도우**만
+생성됨 — 학습에 쓰기엔 턱없이 부족한 양이었다.
+
+**원인 분석**: 중앙값 gap=1이라는 통계만으로는 "연속"이라 오판하기 쉬우나, 실제로는
+2~3프레임짜리 짧은 끊김(사람이 잠깐 프레임에서 사라지는 순간 — Phase 1에서 확인한
+탐지 실패와 같은 원인으로 추정)이 매우 잦아 `max_gap_for_continuity=1` 기준으로는
+런이 잘게 쪼개짐.
+
+**개선**: `max_gap_for_continuity`를 1/3/5/10으로 바꿔가며 런 길이 분포를 실측 비교:
+
+| max_gap | n_runs | median | p90 | max |
+|---|---|---|---|---|
+| 1 | 4795 | 4 | 11 | 38 |
+| **3** | 224 | **61** | 269 | 681 |
+| 5 | 30 | 28 | 3723 | 4039 |
+| 10 | 9 | 3950 | 4039 | 4039 |
+
+gap=5 이상은 실제 장면 전환까지 이어붙일 위험이 커 보수적으로 **gap=3**을 채택하고,
+끊긴 구간은 선형 보간(`densify_run`)으로 채우며 보간된 프레임은 `keypoint_score=0`으로
+마킹해 실측과 구분되게 했다.
+
+**최종 실행 결과** (`max_gap_for_continuity=3`, `window_length=30`, `window_stride=15`):
+
+| 카테고리 | 영상 그룹 수 | 생성된 윈도우 수 |
+|---|---|---|
+| falling_from_height (떨어짐) | 7 | 1663 |
+| struck_by_collision (부딪힘) | 8 | 1698 |
+| trip_and_fall (넘어짐) | 7 | 1647 |
+| struck_by_object (물체에 맞음) | 10 | 1679 |
+| **합계** | 32 | **6687** |
+
+생성된 `data/processed/fall_keypoints/train_windows.pkl`을 다시 로드해 검증:
+`keypoint` shape `(1, 30, 16, 2)`, `keypoint_score` shape `(1, 30, 16)`, 클래스
+분포 거의 균등(1647~1698개/클래스). pyskl `PoseDataset` 포맷 요구사항(frame_dir,
+label, img_shape, original_shape, total_frames, keypoint, keypoint_score) 충족 확인.
+
+**미해결**: AIHub 16-keypoint가 COCO-17 등 표준 스켈레톤 레이아웃과 어떻게
+대응되는지 공식 문서를 아직 확보하지 못해, pyskl 학습에 필요한 Graph(인접행렬)
+설정은 아직 만들지 못함 — 원본 16개 인덱스를 그대로 보존만 해둔 상태.
