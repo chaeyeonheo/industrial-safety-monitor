@@ -10,11 +10,15 @@ detection:
 
 fall_detection:
   stage_a_heuristic:
-    # bbox aspect ratio(w/h)가 짧은 시간에 급격히 커지고(눕는 자세) 동시에
-    # centroid의 수직 하강 속도가 임계값을 넘으면 Stage B(포즈 분류기) 트리거.
-    aspect_ratio_delta_threshold: 0.5   # 초기값, Phase 2 평가로 튜닝
-    vertical_velocity_threshold_px_per_s: 200
+    # 세 신호 중 하나라도 만족하면 Stage B(포즈 분류기) 트리거. 각 신호와 임계값의
+    # 의미는 docs/fall_detection_design.md 참고. 초기값이며 Phase 2 실측으로 튜닝 예정.
+    aspect_ratio_delta_threshold: 0.5           # window_frames 동안 width/height 비율 증가폭
+    vertical_velocity_threshold_px_per_s: 200   # window_frames 동안 bbox 중심의 하강 속도
     window_frames: 15
+    track_loss_min_history_frames: 10  # 이만큼 연속 추적된 track만 "갑자기 사라짐" 대상으로 봄
+    track_loss_grace_frames: 2         # 사라진 지 이만큼 프레임이 지나면 TRACK_LOST 트리거
+                                        # (2026-07-05 실측: 쓰러진 자세를 YOLO11n이 탐지 못해
+                                        #  bbox 자체가 사라지는 사례 확인 → 위 두 신호로는 못 잡음)
   stage_b_classifier:
     type: "stgcn"              # stgcn | ctrgcn | cnn_lstm
     keypoint_format: "coco17"

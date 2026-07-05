@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
+import torch
 from ultralytics import YOLO
 
 COCO_PERSON_CLASS_ID = 0
@@ -55,7 +56,16 @@ class PersonTracker:
         self.model = YOLO(resolved)
         self.tracker_cfg = tracker_cfg
         self.conf_threshold = conf_threshold
-        self.device = device
+        # 명시적으로 CUDA를 강제한다 — None을 넘기면 ultralytics가 "자동 선택"하지만
+        # 드라이버 상태에 따라 조용히 CPU로 떨어질 수 있어 항상 확인 가능하게 함.
+        if device is not None:
+            self.device = device
+        elif torch.cuda.is_available():
+            self.device = "0"
+        else:
+            self.device = "cpu"
+        print(f"[PersonTracker] using device={self.device} "
+              f"({torch.cuda.get_device_name(0) if self.device not in ('cpu',) and torch.cuda.is_available() else 'CPU'})")
 
     def track_stream(self, source: str | Path | int | list[str]) -> Iterator[list[Track]]:
         """비디오 파일 / 카메라 인덱스 / 정렬된 이미지 경로 리스트(프레임 시퀀스)를 받아
