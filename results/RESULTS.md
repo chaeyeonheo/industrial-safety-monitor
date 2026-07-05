@@ -195,3 +195,31 @@ v1의 한계를 보완하기 위해 Stage A 휴리스틱(`aspect_ratio_delta_thr
 뜻이다. **즉 이 v2 방식도 카테고리에 따라 검출 편향이 있을 수 있어, v1과의
 다운스트림 분류 성능 비교(ablation)가 필요하다** — 사용자가 시간 여유가 되면
 진행하기로 함.
+
+## Phase 2: "탐지+추적만" vs "keypoint 전환감지 병행" 비교 (2026-07-06)
+
+**실행 명령**: `python scripts/demo_tracking_vs_transition.py`
+같은 낙상 시퀀스(S2-N6001, 443프레임)에 대해 위쪽엔 YOLO11n+ByteTrack bbox
+추적 결과를, 아래쪽엔 정답 keypoint + Stage A 방식 전환감지(종횡비 급변,
+`aspect_ratio_delta_threshold=0.5`, `window_frames=15`, Stage A와 동일 임계값)
+결과를 나란히 오버레이했다.
+
+**실측 결과**:
+- 전체 443프레임 중 **224프레임(약 50.6%)에서 YOLO11n 탐지 자체가 실패**함
+  (Phase 1에서 확인한 문제가 이 영상 전체로 보면 훨씬 심각하다는 게 드러남).
+- 그중 **29프레임은 keypoint 기반 전환감지가 대신 "낙상 전환"으로 정확히
+  잡아냄** (`results/figures/compare_tracking_miss_transition_catches.png`
+  참고 — 사람이 매트에 완전히 누워 YOLO bbox는 "DETECTION LOST"인데, 같은
+  프레임의 정답 keypoint로 계산한 ratio=3.09로 "FALL TRANSITION DETECTED"가
+  뜬다).
+- 나머지 195프레임의 탐지 실패는 전환 시점과 무관하다 — 즉 낙상 때문이
+  아니라 다른 이유(각도, 부분 가려짐 등)로 탐지가 실패하는 경우가 더 많다는
+  뜻이며, 이는 별도로 조사가 필요한 사실로 남겨둔다.
+
+**해석에 유의**: 이 비교의 아래쪽은 "우리 파이프라인이 실시간으로 pose를
+추출해 판단한 것"이 아니라 **AIHub 정답 keypoint에 Stage A 로직을 적용한
+것**이다. 즉 "keypoint 신호(정답이든, 향후 실제 pose 추출기의 출력이든)가
+있으면 bbox가 사라지는 구간에서도 낙상을 감지할 수 있다"는 근거를 보여주는
+것이며, 아직 실시간 pose 추출기를 통합한 최종 비교는 아니다(pose 추출기는
+Stage B 구현 시 추가 예정). 전체 비교 영상은 `outputs/tracking_vs_transition.mp4`
+(로컬에만 존재, git 미포함).
