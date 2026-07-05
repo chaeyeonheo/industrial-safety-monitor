@@ -161,10 +161,12 @@ TRACK_LOST는 살아있는 bbox가 없다. 계획은:
 - 서 있는 사람은 YOLO11n이 안정적으로 탐지(conf 0.85~0.89 수준).
 - 쓰러져 엎드린 사람은 YOLO11n이 **전혀 탐지하지 못함** — Stage A에 TRACK_LOST를
   추가한 직접적 근거.
-- AIHub 키포인트 라벨용 프레임은 균일한 fps가 아니라 듬성듬성 샘플링됨(프레임
-  간격 중앙값 7, 최대 60) — 이 때문에 ByteTrack이 443프레임을 38개의 짧은
-  track으로 파편화했고, Stage A의 track_loss 조건(10프레임 이상 지속)을 만족하는
-  track 자체가 드물었다. **실제 연속 CCTV 영상에서 재검증이 필요**하다.
+- Phase 1 트래킹 검증에 쓴 프레임 시퀀스(validation 서브셋 하나, 443프레임)는 간격이
+  불균일(중앙값 7, 최대 60)해 ByteTrack이 38개의 짧은 track으로 파편화됐다. **단,
+  이후 train 셋 4개 카테고리 전체(95,798개 파일)를 전수 분석한 결과 이는 예외적
+  케이스였고, train 셋은 실제로 프레임 간격 중앙값이 1(거의 연속)임을 확인했다**
+  (`scripts/analyze_keypoint_labels.py`, `results/RESULTS.md` 참고). Stage A의
+  track_loss 조건은 연속 프레임 기준으로 재검증이 필요하다.
 - Stage A를 실제로 돌려본 결과 443프레임 중 3건 트리거, 그중 TRACK_LOST 1건은
   `near_frame_edge` 필터가 의도대로 낮은 신뢰도를 부여함을 확인.
 
