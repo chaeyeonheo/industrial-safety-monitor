@@ -42,8 +42,10 @@ JSON 파일이 프레임 하나당 하나씩 들어있다:
   프레임 단위로 동작 국면(서 있음/넘어지는 중/누워있음)을 구분하는 필드는
   **JSON 어디에도 없다.** 이 사실이 아래 v1의 핵심 한계로 이어진다.
 - keypoint는 COCO-17이 아니라 **16개 점**이다. 각 점이 해부학적으로 무엇을
-  의미하는지(어깨/팔꿈치/무릎 등) 알려주는 AIHub 공식 가이드 문서를 아직
-  확보하지 못했다. **이 문서 작성 시점까지 미해결.**
+  의미하는지(어깨/팔꿈치/무릎 등) 알려주는 AIHub 공식 가이드 문서를 확보하지
+  못해, 실제 이미지에 점을 찍어 눈으로 확인하는 방식으로 best-effort 매핑을
+  추론했다. 상세 내용과 신뢰도 한계는 `docs/keypoint_mapping.md` 참고
+  (2프레임만 교차검증한 상태로 확정 아님).
 
 ## 1. 전수 분석 (`scripts/analyze_keypoint_labels.py`)
 
@@ -204,8 +206,9 @@ struck_by_collision/struck_by_object는 164~193건뿐이다. "종횡비가 급�
 
 ## 5. 아직 남은 것
 
-- AIHub 16-keypoint의 해부학적 의미(관절 이름) 확보 — HD-GCN의 그래프(인접행렬)
-  설정에 필요. 공식 가이드 문서 없이는 추측으로 채우지 않는다(지시문 규칙).
+- AIHub 16-keypoint의 해부학적 의미 — `docs/keypoint_mapping.md`에 실제 이미지
+  시각화 기반 best-effort 매핑 작성 완료(2026-07-06). 2프레임만 검증한 상태라
+  HD-GCN 그래프 설정 전에 다른 자세로 추가 교차검증 권장.
 - v1/v2 각각으로 HD-GCN을 학습해 실제 정확도/F1 비교(ablation)
 - validation 셋에 대해서도 동일한 v1/v2 변환 적용(현재는 train만 처리)
 - struck_by_collision/struck_by_object에 대한 v2 검출 편향을 보완할 다른 신호
