@@ -159,10 +159,19 @@ Phase 3 PPE 학습 파이프라인을 먼저 검증하고, 필요하면 나머�
       오버레이에도 bbox를 그려서 위/아래를 "박스 vs 박스"로 직접 비교 가능하게 함,
       (b) 합본 영상뿐 아니라 `outputs/tracking_only.mp4`/`transition_only.mp4` 개별
       저장도 추가. 재실행 결과 동일 수치(224/29건) 재현 확인.
-- [~] **PPE(안전모) YOLO 학습 착수 중** — 물류센터 라벨/이미지는 이미 받아둠
-      (`data/raw/ppe_construction_aihub163/labels/train`, `images/train`). **라벨 포맷을
-      아직 열어보지 못함**(다음 세션 최우선 작업 — bbox 좌표 형식, 클래스 목록 확인 후
-      `scripts/convert_aihub163_to_yolo.py` 작성).
+- [x] **PPE bbox 클래스 매핑 실측 완료** (`docs/ppe_class_mapping.md`). 라벨 zip은
+      3개 촬영지 라벨을 다 담고 있지만 이미지는 반도체클러스터만 받아서, 112,363개
+      라벨 중 21,037개만 실제 학습에 쓸 수 있음을 확인. bbox를 실제 이미지에 그려
+      4개 클래스 확인: helmet(01,07)/vest(01,02)/harness(01,01,추정)/safety_shoes(01,05,추정).
+      03/04는 이 촬영지에 데이터가 아예 없고, 06/08은 너무 드물고(40건/13건) 애매해 제외.
+- [x] `scripts/convert_aihub163_to_yolo.py` 작성 완료, 2000프레임 샘플 변환 실행
+      (662프레임에 PPE bbox 존재, 클래스당 380~451개). `scripts/train_ppe_yolo.py` 작성.
+- [~] **PPE YOLO 학습 진행 중** — batch=2로 처음 돌렸더니 사용자가 batch 시각화
+      이미지(`train_batch0/1.jpg`)를 보고 "배경만 있는 배치가 너무 많다"는 타당한
+      문제 제기 → GPU가 유휴(7.9GB 여유)임을 확인하고 **batch=16, epoch=20**으로
+      재시작(백그라운드). GPU 메모리 사용량 2.25GB로 확인, 안정적. **완료 대기 중,
+      다음 세션에서 `outputs/ppe_yolo_runs/train/results.csv`로 최종 mAP 확인부터
+      할 것.**
 - [ ] NLG 방식 3-way 비교 계획 확정: 템플릿(Jinja2) / Gemini API / Ollama 로컬 — 사용자 요청,
       Phase 2~3 완료 후 착수 예정. API 키는 사용자가 직접 발급. **아직 코드 착수 전.**
 - [ ] Phase 2 나머지(HD-GCN 실제 학습 — v1/v2 데이터 각각, ablation 비교, 1D-CNN-LSTM,
