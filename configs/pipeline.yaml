@@ -3,7 +3,7 @@
 # 각 값의 결정 근거는 옆에 주석으로 남긴다 (Phase 1 이후 실측 데이터로 조정 예정).
 
 detection:
-  model: "yolo11n.pt"        # 실시간성 우선(경량), 정확도 상한 비교는 Phase 3에서 yolo11x/Swin 등 추가
+  model: "weights/yolo11n.pt" # 실시간성 우선(경량), 정확도 상한 비교는 Phase 3에서 yolo11x/Swin 등 추가
   person_class_id: 0          # COCO person
   conf_threshold: 0.4
   tracker: "bytetrack.yaml"   # Ultralytics 내장 ByteTrack config
