@@ -35,6 +35,7 @@ body::before {
   inset: 0;
   pointer-events: none;
   background: var(--bg);
+  z-index: -1;
 }
 
 .topbar {
