@@ -83,16 +83,52 @@ Ablation 2와 이어지는 문제: gap=3으로 그룹핑해도, "영상 폴더 �
 것과, 그 뒤에 학습된 분류기(HD-GCN)를 붙이는 것 중 어느 쪽이 더 정확한가 —
 특히 오탐(false positive)이 얼마나 줄어드는가?
 
-**실험 설계**: v2 데이터(전환감지로 만든 2,715개 윈도우, 5개 클래스: 낙상4종+정상)를
-학습/검증으로 나눠, (a) Stage A 로직만으로 "낙상 유형 판단"을 흉내낸 규칙 기반
-분류와 (b) HD-GCN 학습 결과의 검증 정확도를 비교.
+**중요한 함정**: v2 데이터의 "양성(낙상 등) 라벨"은 애초에 Stage A와 똑같은
+로직(종횡비 전환 감지)으로 만들어졌다. 그래서 "전환이 있다/없다"는 이진 판정만
+놓고 보면 Stage A는 자기가 만든 라벨을 그대로 맞히는 셈이라 사실상 100%에
+가깝다 — **이건 의미 있는 비교가 아니라 순환論이다.** 진짜 비교 포인트는:
+Stage A는 "전환 있음/없음" 이진 신호만 주지 **어떤 사고 유형인지(낙상/부딪힘/
+넘어짐/물체에맞음/정상 5종 중 무엇인지)는 구분하지 못한다.** HD-GCN은 같은
+keypoint 시퀀스의 실제 움직임 패턴으로 5종을 구분해야 하는, Stage A가 원천적으로
+할 수 없는 task를 수행한다.
 
-<!-- TODO: HD-GCN 학습 완료 후 실측치로 이 표를 채운다. results/RESULTS.md에서
-결과가 나오는 대로 동기화할 것. -->
+**실측 결과 (HD-GCN, batch=32, epoch=15, val 407개)**:
 
-| 방법 | 검증 정확도 | 비고 |
-|---|---|---|
-| Stage A 휴리스틱 단독 | (측정 예정) | 규칙 기반, 학습 없음 |
-| HD-GCN(v2 데이터 학습) | (측정 예정) | `scripts/train_hdgcn_fall.py` |
+전체 정확도 **81.8%**. 클래스별 recall:
 
-*출처*: `scripts/train_hdgcn_fall.py`, `results/RESULTS.md` (작성 중).
+| 클래스 | recall |
+|---|---|
+| falling_from_height | 0.827 |
+| struck_by_collision | 0.545 |
+| trip_and_fall | 0.798 |
+| struck_by_object | 0.633 |
+| normal | 0.886 |
+
+혼동행렬(행=정답, 열=예측):
+
+```
+                       falling_  struck_b  trip_and  struck_b    normal
+  falling_from_height        67         2        10         1         1
+  struck_by_collision         0        12         0         1         9
+        trip_and_fall         0         0        71         1        17
+     struck_by_object         0         2         3        19         6
+               normal         7         4        10         0       164
+```
+
+**해석**: falling_from_height/trip_and_fall(recall 0.80~0.83)은 잘 구분되는데,
+struck_by_collision/struck_by_object(recall 0.55~0.63)는 확실히 약하다 —
+**Ablation 2-보충에서 이미 발견한 패턴(이 두 카테고리는 Stage A 전환 검출
+자체가 164~193건뿐으로 적었음)이 다운스트림 분류 성능에도 그대로 이어진다.**
+"부딪힘/물체에맞음"은 반드시 눕는 자세로 이어지지 않아 학습 신호 자체가
+약했고, 그 결과 분류기도 이 두 클래스를 정상(normal)이나 다른 사고 유형과
+자주 헷갈린다(예: struck_by_collision 21건 중 9건이 normal로 오분류).
+
+또한 normal 클래스도 185개 중 21개(11.4%)가 사고 유형으로 오분류된다 —
+Stage A는 이 negative 샘플들에 대해 구조적으로 오탐이 0%(애초에 Stage A가
+트리거 안 한 구간만 normal로 뽑았으므로)인데, HD-GCN은 실제 움직임을 학습하며
+약간의 오탐이 생긴다. **즉 HD-GCN이 다중 클래스 구분 능력을 얻는 대신, Stage A가
+구조적으로 못 만들던 종류의 오탐(false positive)을 일부 도입한다는 트레이드오프가
+있다** — 이 부분은 정직하게 한계로 기록한다.
+
+*출처*: `scripts/train_hdgcn_fall.py`(학습), `scripts/evaluate_fall_ablation.py`
+(평가), `results/RESULTS.md` "Phase 2: HD-GCN 학습 및 ablation" 절.

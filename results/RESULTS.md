@@ -255,6 +255,28 @@ train/val = 1800/200 (9:1).
   harness/safety_shoes 이름이 틀렸을 가능성이 있음(helmet/vest는 시각적으로 고신뢰).
 - 훈련 프레임이 반도체클러스터 촬영지 하나뿐이라 다른 현장(화물터미널E/E2 등)에
   대한 일반화는 검증 안 됨.
-- "미착용" 판정(간접 연결 IoU 매칭)은 아직 미구현 — 지금은 보호구 자체를
-  탐지할 뿐, Phase 1 사람 탐지와 결합해 "이 사람은 헬멧이 없다"고 판단하는
-  로직(`src/ppe_detection/`)은 다음 단계.
+
+**추가(2026-07-06)**: "미착용" 판정(간접 연결)을 `src/ppe_detection/indirect_association.py`로
+구현 완료. 전체 bbox IoU 대신 "보호구 bbox 중심이 사람 bbox 안에 있고, 신체
+부위별 기대 y범위에 맞는지"로 매칭(헬멧처럼 작은 부분 박스는 전체 IoU가 항상
+0에 가까워 무의미하기 때문). 실제 val 이미지로 확인: 헬멧/조끼/안전화를 착용한
+작업자에서 하네스만 정확히 "미착용"으로 판정됨(`results/figures/ppe_compliance_*.png`).
+
+## Phase 2: HD-GCN 학습 및 ablation (2026-07-06)
+
+**데이터**: v2(전환감지, `data/processed/fall_keypoints_transition/train_windows_transition.pkl`,
+2,715개 윈도우, 5클래스). **학습 명령**: `python scripts/train_hdgcn_fall.py --epochs 15 --batch 32`
+**환경**: RTX 4070 Laptop, GPU 메모리 사용량 1.2GB/8GB(여유 충분). 학습 세부사항과
+겪은 이슈(einops 누락, 업스트림 저장소의 누락된 그래프 모듈, AHA 모듈의 하드코딩된
+NTU 그래프 호출 monkeypatch)는 `docs/PROGRESS.md` "문제 4" 참고.
+
+**실측 결과 (val 407개)**: 전체 정확도 **81.8%** (최고 epoch10 기준 83.8%).
+클래스별 recall: falling_from_height 0.827, struck_by_collision 0.545,
+trip_and_fall 0.798, struck_by_object 0.633, normal 0.886.
+
+**Ablation 3 핵심 발견**: struck_by_collision/struck_by_object의 recall이
+확실히 낮은데(0.55~0.63), 이는 Ablation 2-보충에서 발견한 "이 두 카테고리는
+Stage A 전환 검출 자체가 적었다(164~193건 vs 낙상/넘어짐 500+건)"는 패턴이
+다운스트림 분류 성능까지 그대로 이어진 것 — 데이터 구성 단계의 약점이
+학습 결과에 그대로 반영됨을 실측으로 확인. 전체 ablation 정리는
+`docs/ablation_studies.md` 참고.
