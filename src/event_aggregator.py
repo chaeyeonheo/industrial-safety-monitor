@@ -12,6 +12,7 @@ from enum import Enum
 class EventType(Enum):
     FALL_SUSPECTED = "fall_suspected"      # Stage A만 트리거된 상태(미확인)
     PPE_MISSING = "ppe_missing"
+    ZONE_INTRUSION = "zone_intrusion"      # 통제 구역 무단진입(밖→안 전환 시점)
 
 
 @dataclass(frozen=True)

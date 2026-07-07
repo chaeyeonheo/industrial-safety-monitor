@@ -1,6 +1,21 @@
 const sourceSelect = document.getElementById("source-select");
 const videoSource = document.getElementById("video-source");
 const videoPlayer = document.getElementById("video-player");
+const videoSourceRaw = document.getElementById("video-source-raw");
+const videoPlayerRaw = document.getElementById("video-player-raw");
+const rawVideoCol = document.getElementById("raw-video-col");
+const vlmPanel = document.getElementById("vlm-panel");
+const vlmFallDetected = document.getElementById("vlm-fall-detected");
+const vlmElapsed = document.getElementById("vlm-elapsed");
+const vlmEvidence = document.getElementById("vlm-evidence");
+const vlmPpe = document.getElementById("vlm-ppe");
+const vlmZoneDetected = document.getElementById("vlm-zone-detected");
+const vlmZoneEvidence = document.getElementById("vlm-zone-evidence");
+const vlmSummary = document.getElementById("vlm-summary");
+const cvFallDetected = document.getElementById("cv-fall-detected");
+const cvFallEvents = document.getElementById("cv-fall-events");
+const cvPpeEvents = document.getElementById("cv-ppe-events");
+const cvZoneEvents = document.getElementById("cv-zone-events");
 const chatLog = document.getElementById("chat-log");
 const chatForm = document.getElementById("chat-form");
 const chatInput = document.getElementById("chat-input");
@@ -89,6 +104,53 @@ function summarizeTimeline(timeline) {
   setIfPresent(insightText, `이 타임라인은 ${start}초부터 ${end}초까지의 이벤트를 담고 있습니다. 주요 이벤트는 ${topEvents}입니다.`);
 }
 
+async function loadVlmComparison(source) {
+  vlmPanel.hidden = true;
+  rawVideoCol.hidden = true;
+  try {
+    const res = await fetch(`/api/vlm/${source}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.available) return;
+
+    rawVideoCol.hidden = false;
+    videoSourceRaw.src = `/video_raw/${source}`;
+    videoPlayerRaw.load();
+
+    const vlm = data.vlm?.vlm_result || {};
+    const cv = data.cv_pipeline || {};
+    const fallLabel = vlm.fall_detected
+      ? `낙상 감지됨 (${vlm.fall_count ?? "?"}회)`
+      : "낙상 없음";
+    setIfPresent(vlmFallDetected, fallLabel);
+    setIfPresent(vlmElapsed, data.vlm?.elapsed_sec ? `${data.vlm.elapsed_sec}초` : "-");
+    setIfPresent(vlmEvidence, vlm.fall_evidence ? `근거: ${vlm.fall_evidence}` : "");
+
+    const ITEM_NAME_KR = { helmet: "안전모", vest: "안전조끼", harness: "안전벨트", safety_shoes: "안전화" };
+    const ppe = vlm.ppe_violations || {};
+    const violations = Object.entries(ITEM_NAME_KR)
+      .filter(([key]) => ppe[key]?.violation)
+      .map(([key, name]) => `${name}(${ppe[key].evidence || "근거 없음"})`);
+    setIfPresent(vlmPpe, violations.length
+      ? `보호구 미착용: ${violations.join(" / ")}` : "보호구 미착용: 없음");
+
+    const zone = vlm.zone_intrusion || {};
+    setIfPresent(vlmZoneDetected, zone.detected ? "진입 감지됨" : "진입 없음");
+    setIfPresent(vlmZoneEvidence, zone.evidence ? `구역 진입 근거: ${zone.evidence}` : "");
+    setIfPresent(vlmSummary, vlm.scene_summary ? `요약: ${vlm.scene_summary}` : "");
+
+    setIfPresent(cvFallDetected, cv.fall_detected ? "낙상 감지됨" : "낙상 없음");
+    setIfPresent(cvFallEvents, String(cv.n_fall_events ?? 0));
+    setIfPresent(cvPpeEvents, String(cv.n_ppe_events ?? 0));
+    setIfPresent(cvZoneEvents, String(cv.n_zone_events ?? 0));
+
+    vlmPanel.hidden = false;
+  } catch (err) {
+    vlmPanel.hidden = true;
+    rawVideoCol.hidden = true;
+  }
+}
+
 function loadVideo(source) {
   if (activeObjectUrl) {
     URL.revokeObjectURL(activeObjectUrl);
@@ -100,6 +162,7 @@ function loadVideo(source) {
   videoPlayer.load();
   setStatus(`데모 source: ${source}`, "ok");
   resetTimelineUI();
+  loadVlmComparison(source);
 }
 
 function isVideoFile(file) {
@@ -123,6 +186,8 @@ async function loadLocalFiles(files) {
   localMode = true;
   activeTimeline = null;
   resetTimelineUI();
+  vlmPanel.hidden = true;
+  rawVideoCol.hidden = true;
 
   if (videoFile) {
     if (activeObjectUrl) {

@@ -1,5 +1,15 @@
-"""실시간 pose 추출기: YOLO11n-pose(COCO-17)로 keypoint를 뽑고, HD-GCN이
-학습된 AIHub 16-keypoint 근사 레이아웃(docs/keypoint_mapping.md)으로 리매핑한다.
+"""실시간 pose 추출기: COCO-17 keypoint를 뽑고, HD-GCN이 학습된 AIHub 16-keypoint
+근사 레이아웃(docs/keypoint_mapping.md)으로 리매핑한다.
+
+두 백엔드를 제공한다:
+- YoloPoseExtractor: YOLO11n-pose(Ultralytics). 가볍고 빠르지만 실측 결과
+  사람이 완전히 쓰러진/누운 자세에서 keypoint를 거의 못 뽑는다(프레임 위에
+  직접 그려서 확인함, docs/ablation_studies.md 참고). 원인은 COCO 학습 데이터
+  자체가 서 있는/걷는 사람 위주라 눕거나 뒤집힌 자세가 거의 없기 때문으로 보임.
+- RTMPoseExtractor: rtmlib(RTMPose, OpenMMLab) 기반. 같은 프레임에서 쓰러진
+  사람을 실제로 더 잘 잡는 것을 실측으로 확인(스크린샷 outputs/rtmpose_*_frame_*.png,
+  YOLO11n-pose는 완전히 놓친 쓰러진 사람을 RTMPose balanced 모드는 검출).
+  기본 백엔드로 채택.
 
 COCO-17: nose, leye, reye, lear, rear, lshoulder, rshoulder, lelbow, relbow,
          lwrist, rwrist, lhip, rhip, lknee, rknee, lankle, rankle
@@ -63,7 +73,7 @@ def remap_coco17_to_aihub16(coco_kp: np.ndarray) -> np.ndarray:
     ])
 
 
-class PoseExtractor:
+class YoloPoseExtractor:
     def __init__(self, weights: str = "yolo11n-pose.pt", conf_threshold: float = 0.4,
                  device: str = "cpu"):
         self.model = YOLO(weights)
@@ -78,8 +88,38 @@ class PoseExtractor:
         detections = []
         if result.keypoints is not None and len(result.boxes) > 0:
             boxes = result.boxes.xyxy.cpu().numpy()
-            kps = result.keypoints.data.cpu().numpy()  # (N, 17, 3)
-            for box, kp in zip(boxes, kps):
-                remapped = remap_coco17_to_aihub16(kp)
+            kps = result.keypoints.data.cpu().numpy()  # 원본 COCO17이면 (N,17,3), AIHub163으로
+            for box, kp in zip(boxes, kps):              # fine-tuning한 모델이면 이미 (N,16,3)
+                # fine-tuning된 모델은 AIHub163 GT keypoint(16점) 레이아웃을 그대로
+                # 예측하도록 학습했으므로 리매핑이 필요 없다 — COCO17(17점) 원본
+                # 모델일 때만 리매핑한다.
+                remapped = kp if kp.shape[0] == 16 else remap_coco17_to_aihub16(kp)
                 detections.append((tuple(box.tolist()), remapped))
+        return detections
+
+
+class RTMPoseExtractor:
+    """rtmlib(RTMPose) 기반 pose 추출기. 내부적으로 Body가 쓰는 det_model(YOLOX)
+    + pose_model(RTMPose)을 직접 호출해서 keypoint뿐 아니라 bbox도 얻는다
+    (Body.__call__은 keypoint/score만 반환하고 bbox는 버림 — track_id 매칭에
+    bbox가 필요해서 직접 접근)."""
+
+    def __init__(self, mode: str = "balanced", device: str = "cpu"):
+        from rtmlib import Body
+        # GPU(onnxruntime CUDA EP)는 이 환경에서 cuDNN8 의존 dll(zlibwapi.dll)이
+        # 없어 로드에 실패해 CPU로 자동 폴백된다(확인됨). 'balanced' 모드는
+        # CPU에서도 289ms/프레임으로 쓸만하고, 'performance'와 동일하게 쓰러진
+        # 사람을 검출했다(실측 비교, outputs/rtmpose_balanced_frame_171.png).
+        self.body = Body(mode=mode, backend="onnxruntime", device=device)
+
+    def extract(self, frame_path: str) -> list[tuple[tuple[float, float, float, float], np.ndarray]]:
+        import cv2
+        img = cv2.imread(frame_path)
+        bboxes = self.body.det_model(img)
+        keypoints, scores = self.body.pose_model(img, bboxes=bboxes)
+        detections = []
+        for bbox, kp, score in zip(bboxes, keypoints, scores):
+            coco_kp = np.concatenate([kp, score[:, None]], axis=-1)  # (17, 3)
+            remapped = remap_coco17_to_aihub16(coco_kp)
+            detections.append((tuple(float(v) for v in bbox), remapped))
         return detections

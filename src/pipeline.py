@@ -40,11 +40,12 @@ from src.detection_tracking.tracker import PersonTracker, Track
 from src.event_aggregator import EventAggregator, EventType, SafetyEvent
 from src.fall_detection.heuristic_trigger import FallHeuristicTrigger
 from src.fall_detection.hdgcn_live import HDGCNLiveClassifier
-from src.fall_detection.pose_extractor import PoseExtractor
+from src.fall_detection.pose_extractor import RTMPoseExtractor, YoloPoseExtractor
 from src.nlg.template_generator import generate_alarm_text
 from src.ppe_detection.indirect_association import (
     REQUIRED_ITEMS, PPEDetection, PersonPPEStatus, check_ppe_compliance,
 )
+from src.zone_intrusion.zone_intrusion import ZoneIntrusionDetector
 
 FALL_MODES = ("bbox_heuristic", "keypoint_heuristic", "hdgcn")
 
@@ -57,21 +58,26 @@ class FrameResult:
     # track_id -> 이 track 전체 구간을 통틀어 확정한 미착용 목록(프레임마다 안 바뀜)
     track_missing_items: dict[int, list[str]] = field(default_factory=dict)
     fall_events: list[SafetyEvent] = field(default_factory=list)  # 이번 프레임에 새로 뜬 낙상 이벤트만
+    zone_events: list[SafetyEvent] = field(default_factory=list)  # 이번 프레임에 새로 뜬 구역진입 이벤트만
     alerts: list[SafetyEvent] = field(default_factory=list)
     alarm_texts: list[str] = field(default_factory=list)
+    # track_id -> AIHub16 keypoints(16,3). keypoint_heuristic/hdgcn 모드일 때만 채워짐
+    # (bbox_heuristic은 pose를 아예 안 뽑으므로 항상 비어있음) — 시각화 오버레이용.
+    keypoints: dict[int, np.ndarray] = field(default_factory=dict)
 
 
-def _bbox_iou(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> float:
-    ax1, ay1, ax2, ay2 = a
-    bx1, by1, bx2, by2 = b
-    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
-    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
-    iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
-    inter = iw * ih
-    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
-    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
-    union = area_a + area_b - inter
-    return inter / union if union > 0 else 0.0
+def _keypoint_containment(track_bbox: tuple[float, float, float, float], keypoints: np.ndarray) -> float:
+    """keypoints 중 track_bbox 안에 들어오는(보이는) 점의 비율. pose 모델 자체의
+    bbox regression 품질과 무관하게 keypoint 위치만으로 track과 매칭하기 위한
+    지표 — fine-tuning된 pose 모델은 학습 라벨의 bbox가 keypoint 범위에서
+    근사한 것이라 tracker의 실제 bbox와 IoU가 잘 안 맞는 경우가 실측으로
+    확인되어(매칭률 15%), IoU 대신 이 방식을 쓴다."""
+    x1, y1, x2, y2 = track_bbox
+    visible = keypoints[keypoints[:, 2] > 0]
+    if len(visible) == 0:
+        return 0.0
+    inside = (visible[:, 0] >= x1) & (visible[:, 0] <= x2) & (visible[:, 1] >= y1) & (visible[:, 1] <= y2)
+    return float(inside.mean())
 
 
 class SafetyMonitorPipeline:
@@ -87,13 +93,18 @@ class SafetyMonitorPipeline:
         ppe_decision_window_frames: int = 3,
         person_conf_threshold: float = 0.35,
         fall_mode: str = "bbox_heuristic",
-        pose_weights: str = "yolo11n-pose.pt",
+        pose_backend: str = "rtmpose",
+        pose_weights: str = "weights/yolo11n-pose.pt",
         hdgcn_weights: str | None = None,
         hdgcn_confidence_threshold: float = 0.5,
+        zone: tuple[float, float, float, float] | None = None,
     ) -> None:
         if fall_mode not in FALL_MODES:
             raise ValueError(f"fall_mode는 {FALL_MODES} 중 하나여야 함: {fall_mode}")
+        if pose_backend not in ("rtmpose", "yolo11n_pose"):
+            raise ValueError(f"pose_backend는 rtmpose/yolo11n_pose 중 하나여야 함: {pose_backend}")
         self.fall_mode = fall_mode
+        self.pose_backend = pose_backend
         self.ppe_weights = ppe_weights
         self.pose_weights = pose_weights
         self.hdgcn_weights = hdgcn_weights
@@ -110,6 +121,7 @@ class SafetyMonitorPipeline:
         self.ppe_decision_window_frames = ppe_decision_window_frames
         self.fall_trigger_kwargs = fall_trigger_kwargs or {}
         self.fps = fps
+        self.zone = zone  # (x1,y1,x2,y2) 픽셀 좌표, None이면 구역감지 비활성화
         self.aggregator = EventAggregator(cooldown_frames=max(1, int(cooldown_seconds * fps)))
 
     def _free_gpu(self) -> None:
@@ -147,17 +159,33 @@ class SafetyMonitorPipeline:
         # 3/5: (keypoint_heuristic/hdgcn 모드일 때만) pose 추출 전용 패스 + track_id 매칭
         keypoints_by_frame: list[dict[int, np.ndarray]] = [dict() for _ in frame_paths]
         if self.fall_mode in ("keypoint_heuristic", "hdgcn"):
-            print("[pipeline] 3/5 pose 추출 전용 패스 (YOLO11n-pose)")
-            pose_extractor = PoseExtractor(
-                weights=self.pose_weights, conf_threshold=0.3, device=self.device)
+            print(f"[pipeline] 3/5 pose 추출 전용 패스 ({self.pose_backend})")
+            if self.pose_backend == "rtmpose":
+                # 기본값. 이 환경은 onnxruntime CUDA EP가 cuDNN8 의존 dll
+                # (zlibwapi.dll) 누락으로 로드 실패해 CPU로 폴백된다(실측 확인)
+                # — 그래서 처음부터 CPU로 명시. balanced 모드 기준 약 289ms/프레임.
+                pose_extractor = RTMPoseExtractor(mode="balanced", device="cpu")
+            else:
+                # 주의: AIHub163 GT keypoint로 fine-tuning한 모델(yolo11n_pose)은
+                # 누운 자세 keypoint는 잘 잡지만(실측 확인), 라벨이 이미지당
+                # 1명만 있어(다른 사람은 라벨 없음) 학습 중 나머지 사람을
+                # 억제하도록 배워버렸다 — 프레임당 탐지 수가 1개로 붕괴됨
+                # (실측: tracker는 3~5명 찾는데 이 모델은 1명만 찾음). 여러
+                # 사람이 동시에 있는 실제 현장에는 아직 못 쓴다 — freeze
+                # 학습 등으로 고치기 전까지는 pose_backend="rtmpose"를 기본값으로 유지.
+                pose_extractor = YoloPoseExtractor(
+                    weights=self.pose_weights, conf_threshold=0.3, device=self.device)
             for frame_idx, (frame_path, tracks) in enumerate(zip(frame_paths, tracks_by_frame)):
                 pose_detections = pose_extractor.extract(frame_path)
                 for track in tracks:
-                    best_iou, best_kp = 0.3, None  # 최소 IoU 0.3 이상만 매칭
-                    for pose_bbox, kp in pose_detections:
-                        iou = _bbox_iou(track.bbox, pose_bbox)
-                        if iou > best_iou:
-                            best_iou, best_kp = iou, kp
+                    # pose_bbox(모델이 직접 예측한 box)는 안 쓴다 — pose 모델의
+                    # box regression 품질과 무관하게, keypoint 자체가 tracker
+                    # bbox 안에 얼마나 들어오는지로 매칭한다(위 docstring 참고).
+                    best_score, best_kp = 0.5, None  # 과반수 keypoint가 안에 들어와야 매칭
+                    for _pose_bbox, kp in pose_detections:
+                        score = _keypoint_containment(track.bbox, kp)
+                        if score > best_score:
+                            best_score, best_kp = score, kp
                     if best_kp is not None:
                         keypoints_by_frame[frame_idx][track.track_id] = best_kp
             del pose_extractor
@@ -204,16 +232,26 @@ class SafetyMonitorPipeline:
                 for item in missing:
                     ppe_decision_events_by_frame[last_seen_frame[track_id]].append((track_id, item))
 
-        print(f"[pipeline] 5/5 낙상 감지({self.fall_mode}) + 이벤트 통합 + NLG (GPU 미사용, hdgcn 모드 제외)")
+        print(f"[pipeline] 5/5 낙상 감지({self.fall_mode}) + 구역감지 + 이벤트 통합 + NLG (GPU 미사용, hdgcn 모드 제외)")
         fall_events_by_frame = self._run_fall_detection(tracks_by_frame, keypoints_by_frame)
+
+        zone_entries_by_frame: dict[int, list[int]] = {}
+        if self.zone is not None:
+            zone_detector = ZoneIntrusionDetector(zone=self.zone)
+            for frame_idx, tracks in enumerate(tracks_by_frame):
+                entered = zone_detector.update(tracks)
+                if entered:
+                    zone_entries_by_frame[frame_idx] = entered
 
         results = []
         for frame_idx, (tracks, statuses) in enumerate(zip(tracks_by_frame, statuses_by_frame)):
             ppe_events_this_frame = ppe_decision_events_by_frame.get(frame_idx, [])
             fall_events_this_frame = fall_events_by_frame.get(frame_idx, [])
+            zone_entries_this_frame = zone_entries_by_frame.get(frame_idx, [])
             results.append(self._combine_frame(
                 frame_idx, tracks, statuses, track_missing_items,
-                ppe_events_this_frame, fall_events_this_frame))
+                ppe_events_this_frame, fall_events_this_frame, keypoints_by_frame[frame_idx],
+                zone_entries_this_frame))
         return results
 
     def _run_fall_detection(
@@ -289,7 +327,8 @@ class SafetyMonitorPipeline:
     def _combine_frame(
         self, frame_idx: int, tracks: list[Track], statuses: list[PersonPPEStatus],
         track_missing_items: dict[int, list[str]], ppe_events_this_frame: list[tuple[int, str]],
-        fall_events_this_frame: list[SafetyEvent],
+        fall_events_this_frame: list[SafetyEvent], keypoints: dict[int, np.ndarray],
+        zone_entries_this_frame: list[int],
     ) -> FrameResult:
         candidate_events: list[SafetyEvent] = list(fall_events_this_frame)
 
@@ -302,11 +341,21 @@ class SafetyMonitorPipeline:
                 confidence=0.8,
             ))
 
+        for track_id in zone_entries_this_frame:
+            candidate_events.append(SafetyEvent(
+                track_id=track_id,
+                event_type=EventType.ZONE_INTRUSION,
+                frame_idx=frame_idx,
+                detail="restricted_zone",
+                confidence=1.0,
+            ))
+
         alerts = self.aggregator.submit(candidate_events)
         alarm_texts = [generate_alarm_text(e) for e in alerts]
         return FrameResult(
             frame_idx=frame_idx, tracks=tracks, ppe_statuses=statuses,
             track_missing_items=track_missing_items,
             fall_events=[e for e in alerts if e.event_type == EventType.FALL_SUSPECTED],
-            alerts=alerts, alarm_texts=alarm_texts,
+            zone_events=[e for e in alerts if e.event_type == EventType.ZONE_INTRUSION],
+            alerts=alerts, alarm_texts=alarm_texts, keypoints=keypoints,
         )

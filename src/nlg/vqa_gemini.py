@@ -19,8 +19,9 @@ track_id, 이벤트 종류, 세부사항 포함).
 - 반드시 이 데이터에만 근거해서 답하세요. 타임라인에 없는 내용을 지어내지 마세요.
 - 데이터에 없는 질문이면 "기록된 이벤트에서 확인할 수 없습니다"라고 답하세요.
 - event_type이 "fall_suspected"면 낙상(넘어짐) 의심, "ppe_missing"이면 보호구
-  미착용입니다. detail 필드에 어떤 보호구인지(helmet=안전모, vest=안전조끼,
-  harness=안전벨트, safety_shoes=안전화) 나옵니다.
+  미착용, "zone_intrusion"이면 통제구역 무단진입입니다. ppe_missing의 detail
+  필드에 어떤 보호구인지(helmet=안전모, vest=안전조끼, harness=안전벨트,
+  safety_shoes=안전화) 나옵니다.
 - 간결하고 명확하게 한국어로, 초 단위/track_id를 정확히 인용해서 답하세요.
 """
 

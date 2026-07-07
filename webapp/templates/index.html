@@ -9,7 +9,6 @@
 <body>
   <header class="topbar">
     <div class="brand">
-      <span class="brand-mark"></span>
       <div class="brand-copy">
         <span class="brand-text">Industrial Safety Monitor</span>
         <span class="brand-sub">Safety vision intelligence</span>
@@ -64,15 +63,54 @@
           <div class="stage-badge">monitoring</div>
         </div>
 
-        <div class="video-shell">
-          <video id="video-player" controls autoplay muted loop playsinline>
-            <source id="video-source" src="" type="video/mp4">
-          </video>
+        <div class="video-compare-row">
+          <div class="video-compare-col">
+            <p class="video-compare-label">CV 파이프라인 (탐지+추적+PPE+pose)</p>
+            <div class="video-shell">
+              <video id="video-player" controls autoplay muted loop playsinline>
+                <source id="video-source" src="" type="video/mp4">
+              </video>
+            </div>
+          </div>
+          <div class="video-compare-col" id="raw-video-col" hidden>
+            <p class="video-compare-label">원본 (오버레이 없음)</p>
+            <div class="video-shell">
+              <video id="video-player-raw" controls muted loop playsinline>
+                <source id="video-source-raw" src="" type="video/mp4">
+              </video>
+            </div>
+          </div>
         </div>
 
         <div class="stage-footer">
           <div class="footer-chip">데모 source 또는 드롭 파일 사용 가능</div>
           <div class="footer-chip footer-chip--accent">영상과 타임라인을 같이 쓰면 질문 응답이 활성화됩니다</div>
+        </div>
+
+        <div class="vlm-panel" id="vlm-panel" hidden>
+          <div class="vlm-panel-head">
+            <p class="eyebrow">Version 2</p>
+            <h3>VLM 한 번 호출 vs CV 파이프라인</h3>
+          </div>
+          <div class="vlm-compare-grid">
+            <div class="vlm-col">
+              <div class="vlm-col-title">VLM (Gemini, 프레임 몇 장 → 한 번의 판단)</div>
+              <div class="vlm-row"><span>낙상 감지</span><strong id="vlm-fall-detected">-</strong></div>
+              <div class="vlm-row"><span>소요 시간</span><strong id="vlm-elapsed">-</strong></div>
+              <div class="vlm-row"><span>통제구역 진입</span><strong id="vlm-zone-detected">-</strong></div>
+              <div class="vlm-text" id="vlm-evidence"></div>
+              <div class="vlm-text" id="vlm-ppe"></div>
+              <div class="vlm-text" id="vlm-zone-evidence"></div>
+              <div class="vlm-text" id="vlm-summary"></div>
+            </div>
+            <div class="vlm-col">
+              <div class="vlm-col-title">CV 파이프라인 (탐지+추적+PPE+pose+휴리스틱)</div>
+              <div class="vlm-row"><span>낙상 감지</span><strong id="cv-fall-detected">-</strong></div>
+              <div class="vlm-row"><span>낙상 이벤트 수</span><strong id="cv-fall-events">-</strong></div>
+              <div class="vlm-row"><span>PPE 이벤트 수</span><strong id="cv-ppe-events">-</strong></div>
+              <div class="vlm-row"><span>통제구역 진입 건수</span><strong id="cv-zone-events">-</strong></div>
+            </div>
+          </div>
         </div>
       </article>
 
@@ -91,6 +129,7 @@
           <button type="button" class="quick-chip" data-question="몇 번 작업자가 낙상했나요?">낙상 작업자</button>
           <button type="button" class="quick-chip" data-question="안전모 미착용은 있나요?">안전모 미착용</button>
           <button type="button" class="quick-chip" data-question="누가 보호구를 안 썼나요?">미착용 작업자</button>
+          <button type="button" class="quick-chip" data-question="통제구역에 무단 진입한 사람이 있나요?">구역 진입</button>
         </div>
 
         <div class="insight-panel" id="insight-panel">

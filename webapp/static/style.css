@@ -60,13 +60,6 @@ body::before {
   gap: 2px;
 }
 
-.brand-mark {
-  width: 12px;
-  height: 12px;
-  border-radius: 0;
-  background: var(--accent);
-}
-
 .brand-text {
   font-size: 18px;
   font-weight: 800;
@@ -313,15 +306,106 @@ body::before {
   overflow: hidden;
   background: #f5fbff;
   aspect-ratio: 16 / 9;
-  min-height: 260px;
+  /* min-height를 aspect-ratio와 같이 쓰면 폭이 좁아질 때(2열 비교 레이아웃) 실제
+     박스 모양이 16:9가 아니게 강제되면서 영상이 잘려 보이는 문제가 있었음 —
+     min-height 제거하고 aspect-ratio만으로 박스 모양을 결정하게 함. */
 }
 
-#video-player {
+#video-player,
+#video-player-raw {
   width: 100%;
   height: 100%;
   object-fit: contain;
   display: block;
   background: #000;
+}
+
+/* 브라우저 네이티브 전체화면(Fullscreen API) 진입 시 일부 브라우저가 기본
+   UA 스타일을 다시 적용해서 object-fit이 안 먹히고 영상이 잘려 보이는
+   문제가 있음 — :fullscreen 상태에도 같은 규칙을 명시적으로 강제. */
+#video-player:fullscreen,
+#video-player-raw:fullscreen,
+#video-player:-webkit-full-screen,
+#video-player-raw:-webkit-full-screen {
+  width: 100vw;
+  height: 100vh;
+  object-fit: contain;
+  background: #000;
+}
+
+.video-compare-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 1100px) {
+  .video-compare-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.video-compare-label {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.vlm-panel {
+  margin-top: 20px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  background: var(--panel-soft);
+}
+
+.vlm-panel-head h3 {
+  margin: 2px 0 12px;
+  font-size: 15px;
+}
+
+.vlm-compare-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 860px) {
+  .vlm-compare-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.vlm-col {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  padding: 12px;
+}
+
+.vlm-col-title {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--accent-strong);
+  margin-bottom: 8px;
+}
+
+.vlm-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px dashed var(--border);
+  font-size: 13px;
+}
+
+.vlm-text {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  white-space: pre-line;
 }
 
 .stage-footer {

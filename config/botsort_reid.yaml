@@ -1,0 +1,24 @@
+# BoT-SORT(ReID 없이) + 더 긴 track_buffer. AIHub 프레임이 드문드문
+# 샘플링되어(간격 중앙값 7, 최대 60+) 같은 사람의 실제 이동거리가 프레임마다
+# 들쭉날쭉하게 보인다 — 기본 ByteTrack은 모션(IoU)만 보므로 이런 큰 간격에서
+# 자주 새 ID를 배정한다. track_buffer를 늘리면 잠깐 놓친 트랙을 더 오래
+# 살려두므로 재매칭 가능성이 높아진다.
+#
+# with_reid는 일부러 안 켠다 — 켜면 YOLO 탐지기와 별도로 외형 특징 추출용
+# ReID 네트워크가 동시에 GPU에 올라가는데, 이 프로젝트는 "모델 2개를 동시에
+# 띄우지 않는다"는 원칙을 반복된 하드웨어 크래시 이후로 지키고 있어서
+# 여기서도 예외를 두지 않는다.
+tracker_type: botsort
+track_high_thresh: 0.25
+track_low_thresh: 0.1
+new_track_thresh: 0.25
+track_buffer: 60          # 기본 30 → 60 (드문 샘플링에서 트랙이 더 오래 살아있게)
+match_thresh: 0.8
+fuse_score: True
+
+gmc_method: sparseOptFlow
+
+proximity_thresh: 0.5
+appearance_thresh: 0.8
+with_reid: False
+model: auto

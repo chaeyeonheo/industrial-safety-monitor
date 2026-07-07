@@ -15,6 +15,9 @@ _TEMPLATES: dict[EventType, Template] = {
     EventType.PPE_MISSING: Template(
         "[주의] {{ track_id }}번 작업자 {{ detail_kr }} 미착용"
     ),
+    EventType.ZONE_INTRUSION: Template(
+        "[경고] {{ track_id }}번 작업자 통제구역 진입"
+    ),
 }
 
 ITEM_NAME_KR = {
